@@ -32,8 +32,9 @@ export async function verifyAction(input: VerifyInput, next?: string): Promise<A
   redirect(safeNext(next));
 }
 
-export async function resendAction(): Promise<void> {
-  await resendCode();
+export async function resendAction(): Promise<ActionResult> {
+  const result = await resendCode();
+  if (!result.ok) return { error: result.error };
 }
 
 export async function logoutAction(): Promise<void> {

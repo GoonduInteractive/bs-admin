@@ -7,9 +7,9 @@ import { daysAgo } from "./random";
  * the site reads this list. Mutable: the mock adapters write to it.
  */
 export const REGIONS: Region[] = [
-  { id: "lagos", name: "Lagos", status: "active", createdAt: daysAgo(120) },
-  { id: "southEast", name: "South East", status: "active", createdAt: daysAgo(120) },
-  { id: "abuja", name: "Abuja", status: "active", createdAt: daysAgo(120) },
-  { id: "rivers", name: "Rivers", status: "active", createdAt: daysAgo(90) },
-  { id: "ghana", name: "Ghana", status: "active", createdAt: daysAgo(60) },
+  { id: "lagos", slug: "lagos", name: "Lagos", status: "active", createdAt: daysAgo(120) },
+  { id: "southEast", slug: "south-east", name: "South East", status: "active", createdAt: daysAgo(120) },
+  { id: "abuja", slug: "abuja", name: "Abuja", status: "active", createdAt: daysAgo(120) },
+  { id: "rivers", slug: "rivers", name: "Rivers", status: "active", createdAt: daysAgo(90) },
+  { id: "ghana", slug: "ghana", name: "Ghana", status: "active", createdAt: daysAgo(60) },
 ];

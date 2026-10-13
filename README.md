@@ -2,7 +2,7 @@
 
 The admin dashboard for **Beyond Service: Trial of the Gods** (Goondu Games Studio): store, comics, tournaments and players.
 
-It runs entirely on **mock data** until the backend exists. Every screen already reads and writes through a typed API layer, so hooking up real endpoints only changes `src/lib/api/*`.
+It reads and writes through a typed API layer (`src/lib/api/*`). With `BS_API_URL` set, the areas the backend serves use it; everything else runs on **mock data** until its endpoints exist. Without `BS_API_URL`, the whole admin runs on mock data.
 
 ```bash
 npm run dev     # http://localhost:3000
@@ -46,13 +46,21 @@ src/
   components/charts     Recharts wrappers (revenue area, share donut, ranked bars)
 ```
 
-### Going live against the real API
+### The real API
 
-1. Set `BS_API_URL`.
-2. In each `src/lib/api/*.ts` function, replace the body that reads `src/lib/mock/*` with `apiFetch(...)` from `src/lib/api/client.ts`, and parse the response with zod.
-3. Auth: `signIn` and `verifyCode` in `src/lib/api/auth.ts` become POSTs; store the returned token in the session cookie.
-4. Uploads: point `src/app/api/uploads/route.ts` at real storage (S3, Cloudinary, the game CDN). The forms only ever keep the returned URL.
-5. For large lists, move `DataTable`'s search, filters and page into the URL and page on the server.
+Set `BS_API_URL` (in `.env.local`, and in the host's environment when deployed), e.g. `https://backend-a5um.onrender.com`. `src/lib/api/client.ts` holds `apiFetch`: it sends the signed-in admin's token, unwraps the API's `{ success, status, message, data }` envelope, checks `data` with zod, and turns failures into an `ApiError`. A refused token sends the admin back to `/login`.
+
+| Area | Source with `BS_API_URL` set |
+|---|---|
+| Sign-in, verify code, profile | API (`/v1/admin/auth/*`). Codes can't be resent yet: no endpoint. |
+| Players | API: list, stats, suspend, reinstate. Its player records have no email, region, game stats or spend yet, so those columns are hidden. |
+| Regions | API: list, add, rename, archive or restore, stats. Delete has no endpoint yet. The API's Global region is left out: here Global is the "open to every region" choice. |
+| Orders, transactions, shipping | Mock. Endpoints exist; next to connect. |
+| Products, comics, tournaments, settings, dashboard | Mock. No endpoints yet (`/v1/admin/products`, `/tournaments` and `/settings` are placeholders). |
+
+To connect another area: in its `src/lib/api/*.ts` function, add an `if (LIVE)` branch that calls `apiFetch` (or `apiFetchAll` for a paged list) with a zod schema of the reply, and map the API's fields onto the type in `src/types`. Pages don't change.
+
+Still to do: uploads (point `src/app/api/uploads/route.ts` at real storage, or the API's `/v1/files/*`; the forms only keep the returned URL), and for large lists, moving `DataTable`'s search, filters and page into the URL and paging on the server.
 
 Mock writes (new products, status changes, uploads) live in server memory and reset when the dev server restarts.
 

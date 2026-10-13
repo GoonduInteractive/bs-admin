@@ -19,7 +19,7 @@ import {
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { formatCount, formatDate, formatNaira, initials } from "@/lib/format";
 import { CHAMPION, PLAYER_STATUS } from "@/lib/labels";
-import { regionName, regionNames } from "@/lib/regions";
+import { isRegion, regionName, regionNames } from "@/lib/regions";
 import type { Player, Region, RegionId } from "@/types";
 import { setPlayerStatusAction } from "./actions";
 
@@ -74,10 +74,12 @@ function RowMenu({ p, onView }: { p: Player; onView: () => void }) {
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end" className="w-48">
           <DropdownMenuItem onClick={onView}>View profile</DropdownMenuItem>
-          <DropdownMenuItem render={<a href={`mailto:${p.email}`} />}>
-            <Mail />
-            Email player
-          </DropdownMenuItem>
+          {p.email && (
+            <DropdownMenuItem render={<a href={`mailto:${p.email}`} />}>
+              <Mail />
+              Email player
+            </DropdownMenuItem>
+          )}
           <DropdownMenuSeparator />
           <DropdownMenuItem variant={suspended ? "default" : "destructive"} onClick={toggle}>
             {suspended ? <RotateCcw /> : <Ban />}
@@ -106,8 +108,27 @@ function PlayerSheet({ player, names, onClose }: { player: Player | null; names:
   );
 }
 
+/** Only what's known: the API's player record has no stats, spend, email or region yet. */
 function PlayerDetail({ p, names }: { p: Player; names: Record<RegionId, string> }) {
   const { pending, suspended, toggle, dialog } = useSuspend(p);
+  const stats = (
+    [
+      ["Level", p.level],
+      ["Win rate", p.winRate !== undefined && `${Math.round(p.winRate)}%`],
+      ["Points", p.gamePoints !== undefined && formatCount(p.gamePoints)],
+      ["Tournaments", p.tournamentsPlayed],
+      ["Main", p.main && CHAMPION[p.main]],
+      ["Spent", p.totalSpend !== undefined && formatNaira(p.totalSpend)],
+    ] as [string, React.ReactNode][]
+  ).filter(([, v]) => v !== undefined && v !== false);
+  const facts = (
+    [
+      ["Email", p.email && <a key="e" href={`mailto:${p.email}`} className="hover:underline">{p.email}</a>],
+      ["Region", p.region && regionName(p.region, names)],
+      ["Joined", formatDate(p.joinedAt)],
+      ["Last active", p.lastActiveAt && formatDate(p.lastActiveAt)],
+    ] as [string, React.ReactNode][]
+  ).filter(([, v]) => v);
   return (
     <>
       {dialog}
@@ -124,22 +145,16 @@ function PlayerDetail({ p, names }: { p: Player; names: Record<RegionId, string>
         </div>
       </SheetHeader>
       <div className="space-y-5 overflow-y-auto p-6">
-        <div className="grid grid-cols-3 gap-2">
-          <Stat label="Level" value={p.level} />
-          <Stat label="Win rate" value={`${Math.round(p.winRate)}%`} />
-          <Stat label="Points" value={formatCount(p.gamePoints)} />
-          <Stat label="Tournaments" value={p.tournamentsPlayed} />
-          <Stat label="Main" value={CHAMPION[p.main]} />
-          <Stat label="Spent" value={formatNaira(p.totalSpend)} />
-        </div>
+        {stats.length > 0 && (
+          <div className="grid grid-cols-3 gap-2">
+            {stats.map(([label, value]) => (
+              <Stat key={label} label={label} value={value} />
+            ))}
+          </div>
+        )}
         <dl className="divide-y text-sm">
-          {[
-            ["Email", <a key="e" href={`mailto:${p.email}`} className="hover:underline">{p.email}</a>],
-            ["Region", regionName(p.region, names)],
-            ["Joined", formatDate(p.joinedAt)],
-            ["Last active", formatDate(p.lastActiveAt)],
-          ].map(([k, v]) => (
-            <div key={k as string} className="flex justify-between gap-4 py-2.5">
+          {facts.map(([k, v]) => (
+            <div key={k} className="flex justify-between gap-4 py-2.5">
               <dt className="text-muted-foreground">{k}</dt>
               <dd className="text-right">{v}</dd>
             </div>
@@ -163,7 +178,11 @@ export function PlayersTable({ players, regions, initialQuery }: { players: Play
   const [openId, setOpenId] = useState<string | null>(null);
   const open = players.find((p) => p.id === openId) ?? null;
 
-  const columns: Column<Player>[] = [
+  // A column or filter for a field no player carries (the API's records have no region or game stats yet) is left out, not drawn empty.
+  const known = (field: keyof Player) => players.some((p) => p[field] !== undefined);
+  const dash = (v: React.ReactNode) => v ?? "—";
+
+  const allColumns: (Column<Player> & { field?: keyof Player })[] = [
     {
       id: "player",
       header: "Player",
@@ -181,21 +200,56 @@ export function PlayersTable({ players, regions, initialQuery }: { players: Play
       sortValue: (p) => p.handle,
       csv: (p) => p.handle,
     },
-    { id: "region", header: "Region", cell: (p) => regionName(p.region, names), sortValue: (p) => regionName(p.region, names), csv: (p) => regionName(p.region, names) },
-    { id: "level", header: "Level", cell: (p) => <span className="tabular">{p.level}</span>, sortValue: (p) => p.level, csv: (p) => p.level },
-    { id: "winRate", header: "Win rate", cell: (p) => <span className="tabular">{Math.round(p.winRate)}%</span>, sortValue: (p) => p.winRate, csv: (p) => Math.round(p.winRate), pdf: (p) => `${Math.round(p.winRate)}%` },
-    { id: "points", header: "Points", cell: (p) => <span className="tabular">{formatCount(p.gamePoints)}</span>, sortValue: (p) => p.gamePoints, csv: (p) => p.gamePoints },
-    { id: "main", header: "Main", cell: (p) => CHAMPION[p.main], csv: (p) => CHAMPION[p.main] },
+    {
+      id: "region",
+      field: "region",
+      header: "Region",
+      cell: (p) => dash(p.region && regionName(p.region, names)),
+      sortValue: (p) => (p.region ? regionName(p.region, names) : ""),
+      csv: (p) => (p.region ? regionName(p.region, names) : ""),
+    },
+    { id: "level", field: "level", header: "Level", cell: (p) => <span className="tabular">{dash(p.level)}</span>, sortValue: (p) => p.level ?? -1, csv: (p) => p.level ?? "" },
+    {
+      id: "winRate",
+      field: "winRate",
+      header: "Win rate",
+      cell: (p) => <span className="tabular">{p.winRate === undefined ? "—" : `${Math.round(p.winRate)}%`}</span>,
+      sortValue: (p) => p.winRate ?? -1,
+      csv: (p) => (p.winRate === undefined ? "" : Math.round(p.winRate)),
+      pdf: (p) => (p.winRate === undefined ? "—" : `${Math.round(p.winRate)}%`),
+    },
+    {
+      id: "points",
+      field: "gamePoints",
+      header: "Points",
+      cell: (p) => <span className="tabular">{p.gamePoints === undefined ? "—" : formatCount(p.gamePoints)}</span>,
+      sortValue: (p) => p.gamePoints ?? -1,
+      csv: (p) => p.gamePoints ?? "",
+    },
+    { id: "main", field: "main", header: "Main", cell: (p) => dash(p.main && CHAMPION[p.main]), csv: (p) => (p.main ? CHAMPION[p.main] : "") },
     { id: "status", header: "Status", cell: (p) => <StatusBadge {...PLAYER_STATUS[p.status]} />, sortValue: (p) => p.status, csv: (p) => PLAYER_STATUS[p.status].label },
     { id: "joined", header: "Joined", cell: (p) => <span className="whitespace-nowrap">{formatDate(p.joinedAt)}</span>, sortValue: (p) => p.joinedAt, csv: (p) => p.joinedAt },
     { id: "actions", header: <span className="sr-only">Actions</span>, cell: (p) => <RowMenu p={p} onView={() => setOpenId(p.id)} />, className: "w-12" },
   ];
 
+  const columns = allColumns.filter((c) => !c.field || known(c.field));
+
   const filters: Filter<Player>[] = [
     { id: "status", label: "Status", options: Object.entries(PLAYER_STATUS).map(([value, s]) => ({ value, label: s.label })), predicate: (p, v) => p.status === v },
     // From the Regions list: an archived region stays filterable, since players are still in it.
-    { id: "region", label: "Region", options: regions.map((r) => ({ value: r.id, label: r.name })), predicate: (p, v) => p.region === v },
-    { id: "main", label: "Main champion", options: Object.entries(CHAMPION).map(([value, label]) => ({ value, label })), predicate: (p, v) => p.main === v },
+    ...(known("region")
+      ? [
+          {
+            id: "region",
+            label: "Region",
+            options: regions.map((r) => ({ value: r.id, label: r.name })),
+            predicate: (p: Player, v: string) => regions.some((r) => r.id === v && isRegion(r, p.region)),
+          },
+        ]
+      : []),
+    ...(known("main")
+      ? [{ id: "main", label: "Main champion", options: Object.entries(CHAMPION).map(([value, label]) => ({ value, label })), predicate: (p: Player, v: string) => p.main === v }]
+      : []),
   ];
 
   return (
@@ -205,7 +259,7 @@ export function PlayersTable({ players, regions, initialQuery }: { players: Play
         columns={columns}
         getRowId={(p) => p.id}
         onRowClick={(p) => setOpenId(p.id)}
-        searchText={(p) => `${p.handle} ${p.name} ${p.email}`}
+        searchText={(p) => `${p.handle} ${p.name} ${p.email ?? ""}`}
         searchPlaceholder="Search handle, name or email…"
         initialQuery={initialQuery}
         filters={filters}

@@ -2,6 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
+import { failureMessage } from "@/lib/api/client";
 import { getPlayers, setPlayerStatus } from "@/lib/api/competition";
 
 const input = z.object({ id: z.string().min(1), status: z.enum(["active", "suspended"]) });
@@ -15,14 +16,18 @@ export async function setPlayerStatusAction(id: string, status: "active" | "susp
   const parsed = input.safeParse({ id, status });
   if (!parsed.success) return { error: "Invalid request" };
 
-  const player = (await getPlayers()).find((p) => p.id === parsed.data.id);
-  if (!player) return { error: "That player no longer exists" };
-  if (parsed.data.status === "suspended") {
-    if (player.status === "suspended") return { error: `@${player.handle} is already suspended` };
-    if (typedHandle?.trim() !== player.handle) return { error: `Type @${player.handle}'s handle exactly to suspend them` };
+  try {
+    const player = (await getPlayers()).find((p) => p.id === parsed.data.id);
+    if (!player) return { error: "That player no longer exists" };
+    if (parsed.data.status === "suspended") {
+      if (player.status === "suspended") return { error: `@${player.handle} is already suspended` };
+      if (typedHandle?.trim() !== player.handle) return { error: `Type @${player.handle}'s handle exactly to suspend them` };
+    }
+    await setPlayerStatus(parsed.data.id, parsed.data.status);
+  } catch (e) {
+    return { error: failureMessage(e, "Couldn't update the player") };
   }
 
-  await setPlayerStatus(parsed.data.id, parsed.data.status);
   revalidatePath("/players");
   // A suspension also takes them out of the brackets they were in.
   revalidatePath("/tournaments", "layout");

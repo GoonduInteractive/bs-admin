@@ -1,6 +1,8 @@
 import "server-only";
-import type { Player, PlayerStatus, Region, StageKey, Tournament, TournamentStatus } from "@/types";
-import { STAGE as STAGE_LABEL } from "@/lib/labels";
+import { z } from "zod";
+import type { Champion, Player, PlayerStats, Region, StageKey, Tournament, TournamentStatus } from "@/types";
+import { CHAMPION, STAGE as STAGE_LABEL } from "@/lib/labels";
+import { GLOBAL_REGION, isRegion } from "@/lib/regions";
 import {
   QUALIFY_CUT,
   STAGE_ORDER,
@@ -15,11 +17,16 @@ import {
   unplayed,
 } from "@/lib/tournaments";
 import { PLAYERS } from "@/lib/mock/players";
+import { DAY, MOCK_NOW } from "@/lib/mock/random";
 import { REGIONS } from "@/lib/mock/regions";
 import { TOURNAMENTS } from "@/lib/mock/tournaments";
-import { NotFoundError, mockDelay } from "./client";
+import { LIVE, NotFoundError, apiFetch, apiFetchAll, mockDelay } from "./client";
 
-/** Tournaments, players and regions. MOCK - see `merch.ts` for the swap rule. */
+/**
+ * Tournaments, players and regions. Players and regions are LIVE when
+ * `BS_API_URL` is set (see `client.ts`); tournaments have no endpoint yet
+ * (`/v1/admin/tournaments` is a placeholder) and stay on the mock.
+ */
 
 export async function getTournaments(): Promise<Tournament[]> {
   await mockDelay();
@@ -163,50 +170,183 @@ export async function disqualify(slug: string, playerId: string): Promise<Tourna
   return t;
 }
 
+/* ---- Players ----------------------------------------------------------- */
+
+/**
+ * The API's player record. `email` isn't in the spec; it's read if the backend
+ * starts sending it. The spec types `level` and `email_verified` as strings,
+ * so a string or the obvious type is accepted for each.
+ */
+const apiPlayer = z.object({
+  id: z.string(),
+  username: z.string(),
+  first_name: z.string().nullish(),
+  last_name: z.string().nullish(),
+  email: z.string().nullish(),
+  level: z.union([z.number(), z.string()]).nullish(),
+  email_verified: z.union([z.boolean(), z.string()]).nullish(),
+  suspended: z.boolean(),
+  created_at: z.string(),
+  last_login_at: z.string().nullish(),
+  main_character: z.string().nullish(),
+});
+
+function isVerified(v: boolean | string | null | undefined): boolean {
+  if (typeof v === "boolean") return v;
+  return !!v && !["false", "0"].includes(v.toLowerCase());
+}
+
+/** "Ogbun'abali" or "ogbunabali" -> "ogbunabali". Anything not a known champion is left out. */
+function champion(name: string | null | undefined): Champion | undefined {
+  const key = name?.toLowerCase().replace(/[^a-z]/g, "");
+  return (Object.keys(CHAMPION) as Champion[]).find((c) => c === key);
+}
+
+function toPlayer(p: z.output<typeof apiPlayer>): Player {
+  const level = p.level == null ? NaN : Number(p.level);
+  const main = champion(p.main_character);
+  return {
+    id: p.id,
+    handle: p.username,
+    name: [p.first_name, p.last_name].filter(Boolean).join(" ") || p.username,
+    ...(p.email && { email: p.email }),
+    ...(Number.isFinite(level) && { level }),
+    ...(main && { main }),
+    status: p.suspended ? "suspended" : isVerified(p.email_verified) ? "active" : "unverified",
+    joinedAt: p.created_at,
+    ...(p.last_login_at && { lastActiveAt: p.last_login_at }),
+  };
+}
+
 export async function getPlayers(): Promise<Player[]> {
+  if (LIVE) return (await apiFetchAll("/v1/admin/players", apiPlayer)).map(toPlayer);
   await mockDelay();
   return [...PLAYERS];
 }
 
+const apiPlayerStats = z.object({
+  total_players: z.number(),
+  week_active_players: z.number(),
+  unverified_players: z.number(),
+  suspended_players: z.number(),
+});
+
+export async function getPlayerStats(): Promise<PlayerStats> {
+  if (LIVE) {
+    const s = await apiFetch("/v1/admin/players/stats", apiPlayerStats);
+    return { total: s.total_players, activeThisWeek: s.week_active_players, unverified: s.unverified_players, suspended: s.suspended_players };
+  }
+  await mockDelay();
+  // MOCK_NOW keeps "this week" consistent with the fixtures.
+  return {
+    total: PLAYERS.length,
+    activeThisWeek: PLAYERS.filter((p) => p.lastActiveAt && Date.parse(p.lastActiveAt) > MOCK_NOW - 7 * DAY).length,
+    unverified: PLAYERS.filter((p) => p.status === "unverified").length,
+    suspended: PLAYERS.filter((p) => p.status === "suspended").length,
+  };
+}
+
 /**
- * Suspending a player also takes them out of every tournament they're still
- * playing: out of the field, and in the bracket their opponent advances
- * against a bye. Reinstating doesn't put them back.
+ * Suspend or reinstate. MOCK: suspending also takes the player out of every
+ * tournament they're still playing (out of the field, and in the bracket their
+ * opponent advances against a bye); reinstating doesn't put them back. LIVE:
+ * the API's own rules apply; tournaments aren't served yet.
  */
-export async function setPlayerStatus(id: string, status: PlayerStatus): Promise<Player> {
+export async function setPlayerStatus(id: string, status: "active" | "suspended"): Promise<void> {
+  if (LIVE) {
+    // The spec declares `id` as a query parameter on a path that also holds `{id}`; sending both satisfies either reading.
+    const action = status === "suspended" ? "suspend" : "unsuspend";
+    await apiFetch(`/v1/admin/players/${encodeURIComponent(id)}/${action}`, z.unknown(), { method: "PATCH", query: { id } });
+    return;
+  }
+
   await mockDelay();
   const p = PLAYERS.find((x) => x.id === id);
   if (!p) throw new NotFoundError("Player", id);
   p.status = status;
-  if (status === "suspended") {
-    for (const t of TOURNAMENTS) {
-      if (t.status !== "active" && t.status !== "registrationOpen") continue;
-      const entry = t.participants.find((x) => x.playerId === id && (x.status === "active" || x.status === "registered"));
-      if (!entry) continue;
-      entry.status = "eliminated";
-      forfeit(t.bracket, entry.handle);
-    }
+  if (status !== "suspended") return;
+  for (const t of TOURNAMENTS) {
+    if (t.status !== "active" && t.status !== "registrationOpen") continue;
+    const entry = t.participants.find((x) => x.playerId === id && (x.status === "active" || x.status === "registered"));
+    if (!entry) continue;
+    entry.status = "eliminated";
+    forfeit(t.bracket, entry.handle);
   }
-  return p;
 }
 
 /* ---- Regions ----------------------------------------------------------- */
 
-/** Every region, active first, then by name. */
-export async function getRegions(): Promise<Region[]> {
-  await mockDelay();
-  return [...REGIONS].sort((a, b) => (a.status === b.status ? a.name.localeCompare(b.name) : a.status === "active" ? -1 : 1));
+const apiRegion = z.object({
+  id: z.string(),
+  slug: z.string(),
+  name: z.string(),
+  status: z.enum(["active", "archived"]),
+  created_at: z.string(),
+  deleted: z.boolean().optional(),
+});
+
+function toRegion(r: z.output<typeof apiRegion>): Region {
+  return { id: r.id, slug: r.slug, name: r.name, status: r.status, createdAt: r.created_at };
 }
 
-export async function saveRegion(region: Region): Promise<Region> {
+const slugify = (name: string) => name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "");
+
+/**
+ * Every region, active first, then by name. The API keeps Global as a region;
+ * here Global is the "open to every region" choice (GLOBAL_REGION), not a
+ * region to rename or archive, so it's left out.
+ */
+export async function getRegions(): Promise<Region[]> {
+  let regions: Region[];
+  if (LIVE) {
+    const all = await apiFetchAll("/v1/admin/regions", apiRegion);
+    regions = all.filter((r) => !r.deleted && r.slug !== GLOBAL_REGION).map(toRegion);
+  } else {
+    await mockDelay();
+    regions = [...REGIONS];
+  }
+  return regions.sort((a, b) => (a.status === b.status ? a.name.localeCompare(b.name) : a.status === "active" ? -1 : 1));
+}
+
+/** How many players have a region. */
+export async function getPlayersPlaced(): Promise<number> {
+  if (LIVE) return (await apiFetch("/v1/admin/regions/stats", z.object({ players_in_regions: z.number() }))).players_in_regions;
+  return PLAYERS.filter((p) => REGIONS.some((r) => isRegion(r, p.region))).length;
+}
+
+export async function createRegion(name: string): Promise<Region> {
+  if (LIVE) return toRegion(await apiFetch("/v1/admin/regions", apiRegion, { method: "POST", query: { name } }));
   await mockDelay();
-  const i = REGIONS.findIndex((r) => r.id === region.id);
-  if (i === -1) REGIONS.push(region);
-  else REGIONS[i] = region;
+  const region: Region = { id: `reg_${crypto.randomUUID().slice(0, 8)}`, slug: slugify(name), name, status: "active", createdAt: new Date().toISOString() };
+  REGIONS.push(region);
   return region;
 }
 
+export async function renameRegion(id: string, name: string): Promise<Region> {
+  if (LIVE) {
+    return toRegion(await apiFetch(`/v1/admin/regions/${encodeURIComponent(id)}/rename`, apiRegion, { method: "PATCH", body: { name } }));
+  }
+  await mockDelay();
+  const region = REGIONS.find((r) => r.id === id);
+  if (!region) throw new NotFoundError("Region", id);
+  region.name = name;
+  return region;
+}
+
+/** Archive or restore. The API only toggles, so a region already in `status` is left alone. */
+export async function setRegionStatus(region: Region, status: Region["status"]): Promise<void> {
+  if (region.status === status) return;
+  if (LIVE) {
+    await apiFetch(`/v1/admin/regions/${encodeURIComponent(region.id)}/toggle-archive`, z.unknown(), { method: "PATCH" });
+    return;
+  }
+  await mockDelay();
+  const r = REGIONS.find((x) => x.id === region.id);
+  if (r) r.status = status;
+}
+
 export async function deleteRegion(id: string): Promise<void> {
+  if (LIVE) throw new Error("The server can't delete regions yet. Archive it instead.");
   await mockDelay();
   const i = REGIONS.findIndex((r) => r.id === id);
   if (i !== -1) REGIONS.splice(i, 1);

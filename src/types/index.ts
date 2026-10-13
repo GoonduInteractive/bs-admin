@@ -14,7 +14,11 @@
 /* Shared                                                              */
 /* ------------------------------------------------------------------ */
 
-/** A region's id, from the admin-managed Regions list (e.g. "lagos"). */
+/**
+ * A region's id, from the admin-managed Regions list: the API's id (a uuid),
+ * or on mock data and older records its slug (e.g. "lagos"). `lib/regions.ts`
+ * resolves either.
+ */
 export type RegionId = string;
 
 /**
@@ -25,6 +29,8 @@ export type RegionId = string;
  */
 export type Region = {
   id: RegionId;
+  /** "lagos": stable across renames. */
+  slug: string;
   name: string;
   status: "active" | "archived";
   createdAt: string;
@@ -384,21 +390,34 @@ export type Tournament = {
 export type PlayerStatus = "active" | "suspended" | "unverified";
 export type Champion = "soma" | "kaira" | "ogbunabali";
 
+/**
+ * A player. The optional fields are ones the API's player record doesn't carry
+ * yet (no email, region, game stats or spend); a screen shows a dash rather
+ * than a made-up number.
+ */
 export type Player = {
   id: string;
   handle: string;
   name: string;
-  email: string;
-  region: RegionId;
-  level: number;
-  winRate: number;
-  gamePoints: number;
-  main: Champion;
+  email?: string;
+  region?: RegionId;
+  level?: number;
+  winRate?: number;
+  gamePoints?: number;
+  main?: Champion;
   status: PlayerStatus;
   joinedAt: string;
-  lastActiveAt: string;
-  tournamentsPlayed: number;
-  totalSpend: number;
+  lastActiveAt?: string;
+  tournamentsPlayed?: number;
+  totalSpend?: number;
+};
+
+/** The headline counts on Players. */
+export type PlayerStats = {
+  total: number;
+  activeThisWeek: number;
+  unverified: number;
+  suspended: number;
 };
 
 /* ------------------------------------------------------------------ */

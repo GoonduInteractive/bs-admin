@@ -2,7 +2,7 @@ import { NextResponse, type NextRequest } from "next/server";
 
 /**
  * Route guard. An optimistic check only - it looks for the session cookie and
- * redirects; the real authorisation belongs to the API once it exists.
+ * redirects; the real authorisation is the API's, which refuses a bad token.
  * Cookie names are duplicated from `lib/api/auth.ts` because that module is
  * server-only and reads `next/headers`, which the proxy cannot import.
  */
@@ -16,6 +16,12 @@ export function proxy(request: NextRequest) {
   const pending = request.cookies.has(PENDING_COOKIE);
 
   if (pathname === "/login") {
+    // The API refused the token (`apiFetch` sends `?expired=1`): drop the dead cookie rather than bounce back to "/".
+    if (request.nextUrl.searchParams.has("expired")) {
+      const res = NextResponse.next();
+      res.cookies.delete(SESSION_COOKIE);
+      return res;
+    }
     return signedIn ? NextResponse.redirect(new URL("/", request.url)) : NextResponse.next();
   }
 

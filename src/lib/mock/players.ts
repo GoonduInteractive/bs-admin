@@ -51,7 +51,8 @@ const CHAMPIONS: readonly Champion[] = ["soma", "kaira", "ogbunabali"];
 
 const rand = createRandom(7);
 
-export const PLAYERS: Player[] = PEOPLE.map(([handle, name], i) => {
+/** Complete records: the fixtures carry every field the API doesn't serve yet, which the other mocks read. */
+export const PLAYERS: Required<Player>[] = PEOPLE.map(([handle, name], i) => {
   const joined = rand.int(20, 240);
   const status: PlayerStatus =
     i === 12 ? "suspended" : i === 21 || i === 27 ? "unverified" : "active";

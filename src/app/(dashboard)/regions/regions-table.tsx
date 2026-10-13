@@ -22,8 +22,8 @@ import type { Tone } from "@/lib/labels";
 import type { Region } from "@/types";
 import { deleteRegionAction, saveRegionAction, setRegionStatusAction } from "./actions";
 
-/** A region with how many players and tournaments use it. */
-export type RegionRow = Region & { players: number; tournaments: number };
+/** A region with how many players and tournaments use it. `players` is null while the API doesn't say who is where. */
+export type RegionRow = Region & { players: number | null; tournaments: number };
 
 const STATUS: Record<Region["status"], { label: string; tone: Tone }> = {
   active: { label: "Active", tone: "success" },
@@ -63,7 +63,9 @@ function RegionDialog({ open, onOpenChange, region }: { open: boolean; onOpenCha
             <DialogTitle>{region ? `Rename ${region.name}` : "Add a region"}</DialogTitle>
             <DialogDescription>
               {region
-                ? `The new name shows everywhere at once. Its ${formatCount(region.players)} players and ${formatCount(region.tournaments)} tournaments stay in it.`
+                ? region.players === null
+                  ? "The new name shows everywhere at once. Its players and tournaments stay in it."
+                  : `The new name shows everywhere at once. Its ${formatCount(region.players)} players and ${formatCount(region.tournaments)} tournaments stay in it.`
                 : "New regions are offered to players at registration straight away."}
             </DialogDescription>
           </DialogHeader>
@@ -104,7 +106,7 @@ function RowMenu({ row }: { row: RegionRow }) {
   const [renaming, setRenaming] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const archived = row.status === "archived";
-  const used = row.players + row.tournaments > 0;
+  const used = (row.players ?? 0) + row.tournaments > 0;
 
   const run = (fn: () => Promise<{ ok: true } | { error: string }>, done: string) =>
     start(async () => {
@@ -166,7 +168,13 @@ const columns: Column<RegionRow>[] = [
     sortValue: (r) => r.name,
     csv: (r) => r.name,
   },
-  { id: "players", header: "Players", cell: (r) => <span className="tabular">{formatCount(r.players)}</span>, sortValue: (r) => r.players, csv: (r) => r.players },
+  {
+    id: "players",
+    header: "Players",
+    cell: (r) => <span className="tabular">{r.players === null ? "—" : formatCount(r.players)}</span>,
+    sortValue: (r) => r.players ?? -1,
+    csv: (r) => r.players ?? "",
+  },
   {
     id: "tournaments",
     header: "Tournaments",

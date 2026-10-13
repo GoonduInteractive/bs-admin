@@ -10,7 +10,8 @@ import { Input } from "@/components/ui/input";
 import { loginSchema, type LoginInput } from "@/lib/schemas";
 import { loginAction } from "../actions";
 
-export function LoginForm({ next }: { next?: string }) {
+/** `demo`: running on mock data, so the any-password hint is shown. */
+export function LoginForm({ next, demo }: { next?: string; demo: boolean }) {
   const [showPassword, setShowPassword] = useState(false);
   const [serverError, setServerError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
@@ -83,13 +84,15 @@ export function LoginForm({ next }: { next?: string }) {
         </Button>
       </FieldGroup>
 
-      <div className="mt-6 flex gap-2.5 rounded-lg border border-dashed p-3 text-xs text-muted-foreground">
-        <Info className="mt-0.5 size-3.5 shrink-0" />
-        <p>
-          Demo mode: any email and a password of 8+ characters will work. The verification code is{" "}
-          <span className="font-mono font-medium text-foreground">123456</span>.
-        </p>
-      </div>
+      {demo && (
+        <div className="mt-6 flex gap-2.5 rounded-lg border border-dashed p-3 text-xs text-muted-foreground">
+          <Info className="mt-0.5 size-3.5 shrink-0" />
+          <p>
+            Demo mode: any email and a password of 8+ characters will work. The verification code is{" "}
+            <span className="font-mono font-medium text-foreground">123456</span>.
+          </p>
+        </div>
+      )}
     </form>
   );
 }

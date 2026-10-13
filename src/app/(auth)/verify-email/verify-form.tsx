@@ -42,7 +42,8 @@ export function VerifyForm({ next }: { next?: string }) {
 
   function resend() {
     startResend(async () => {
-      await resendAction();
+      const result = await resendAction();
+      if (result?.error) return void toast.error(result.error);
       setCooldown(RESEND_COOLDOWN);
       toast.success("A new code is on its way");
     });
