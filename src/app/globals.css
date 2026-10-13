@@ -1,26 +1,249 @@
 @import "tailwindcss";
+@import "tw-animate-css";
+@import "shadcn/tailwind.css";
 
-:root {
-  --background: #ffffff;
-  --foreground: #171717;
+/*
+  Beyond Service admin theme.
+
+  Every colour here is borrowed from the public site's globals.css
+  (beyond-service/src/app/globals.css) so the two products read as one family.
+  The site is a dark, cinematic marketing surface; the admin is a light work
+  surface, so the site's palette is re-cast into roles rather than copied
+  ground-for-ground:
+
+    ink / graphite   -> primary buttons and headings (the inspiration's black CTAs)
+    signal / ember   -> brand accent: focus ring, active nav, the one red moment
+    blush            -> active nav fill (the site's own hover fill)
+    paper            -> page ground (the community wall's paper)
+    mist / slate     -> borders and secondary text
+    amber, moss,
+    flare            -> status (pending, success, failed)
+
+  Dark mode (class="dark" on <html>, set by next-themes) re-casts the same
+  palette onto the site's own dark grounds: onyx for the page, the menu
+  overlay's #1a1a1a for cards, graphite for inset fills. Tokens that change
+  with the theme are CSS variables below; everything else is fixed.
+
+  Tailwind v4: tokens live here, there is no tailwind.config.ts.
+*/
+
+@custom-variant dark (&:is(.dark *));
+
+@theme {
+  /* ---- Brand, from the site ---- */
+  --color-ink: #000000;
+  --color-onyx: #0b0b0c;
+  --color-graphite: #1e1e1e;
+  --color-signal: #fb0b01;
+  --color-ember: #800c00;
+  --color-crimson: #d10023;
+  --color-blush: #ffe4e1;
+  --color-char: #200404;
+  --color-oxblood: #310400;
+  --color-bone: #e5deb5;
+  --color-linen: #e8ddb7;
+  --color-disabled: #f1f5f9;
+  --color-disabled-fg: #a0a4a8;
+
+  /* ---- Status, from the site ---- */
+  --color-amber: #fdb022;   /* pending, in progress */
+  --color-flare: #e14040;   /* failed, cancelled */
+  --color-sky: #2a78d6;     /* in transit, informational */
+  --color-gold: #d99313;    /* champion crown: the site's podium gold-deep */
+}
+
+/* Tokens that flip with the theme. Values are set on :root and .dark below. */
+@theme inline {
+  --color-paper: var(--paper);          /* inset fills, table headers, hovers */
+  --color-mist: var(--mist);            /* hairlines, dashed borders, grid */
+  --color-slate: var(--slate);          /* neutral status ink */
+  --color-moss: var(--moss);            /* success ink */
+  --color-amber-ink: var(--amber-ink);  /* pending ink */
+  --color-sky-ink: var(--sky-ink);      /* informational ink */
+  --color-amber-soft: var(--amber-soft);
+  --color-moss-soft: var(--moss-soft);
+  --color-flare-soft: var(--flare-soft);
+  --color-sky-soft: var(--sky-soft);
+  --color-slate-soft: var(--slate-soft);
+  --color-brand-soft: var(--brand-soft); /* red-tinted fill: brand pills, progress tracks */
+  --color-brand-ink: var(--brand-ink);
 }
 
 @theme inline {
+  --font-sans: var(--font-host-grotesk), ui-sans-serif, system-ui, sans-serif;
+  --font-display: var(--font-teko), ui-sans-serif, system-ui, sans-serif;
+  --font-heading: var(--font-host-grotesk), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, monospace;
+
   --color-background: var(--background);
   --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+  --color-sidebar-ring: var(--sidebar-ring);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar: var(--sidebar);
+  --color-chart-5: var(--chart-5);
+  --color-chart-4: var(--chart-4);
+  --color-chart-3: var(--chart-3);
+  --color-chart-2: var(--chart-2);
+  --color-chart-1: var(--chart-1);
+  --color-ring: var(--ring);
+  --color-input: var(--input);
+  --color-border: var(--border);
+  --color-destructive: var(--destructive);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-accent: var(--accent);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-muted: var(--muted);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-secondary: var(--secondary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-primary: var(--primary);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-popover: var(--popover);
+  --color-card-foreground: var(--card-foreground);
+  --color-card: var(--card);
+  --radius-sm: calc(var(--radius) * 0.6);
+  --radius-md: calc(var(--radius) * 0.8);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) * 1.4);
+  --radius-2xl: calc(var(--radius) * 1.8);
+  --radius-3xl: calc(var(--radius) * 2.2);
+  --radius-4xl: calc(var(--radius) * 2.6);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
+:root {
+  color-scheme: light;
+  --paper: #f3f3f3;
+  --mist: #dbdde0;
+  --slate: #52575c;
+  --moss: #0b5b3c;
+  --amber-ink: #8a5a00;
+  --sky-ink: #1c5cab;
+  /* Soft fills are mixed from the status colours, not new hues. */
+  --amber-soft: color-mix(in oklab, var(--color-amber) 16%, white);
+  --moss-soft: color-mix(in oklab, #0b5b3c 12%, white);
+  --flare-soft: color-mix(in oklab, var(--color-flare) 12%, white);
+  --sky-soft: color-mix(in oklab, var(--color-sky) 12%, white);
+  --slate-soft: color-mix(in oklab, #52575c 10%, white);
+  --brand-soft: var(--color-blush);
+  --brand-ink: var(--color-ember);
+
+  --background: var(--color-paper);
+  --foreground: var(--color-onyx);
+  --card: #ffffff;
+  --card-foreground: var(--color-onyx);
+  --popover: #ffffff;
+  --popover-foreground: var(--color-onyx);
+  --primary: var(--color-ink);
+  --primary-foreground: #ffffff;
+  --secondary: var(--color-paper);
+  --secondary-foreground: var(--color-onyx);
+  --muted: var(--color-paper);
+  --muted-foreground: var(--color-slate);
+  --accent: var(--color-paper);
+  --accent-foreground: var(--color-onyx);
+  --destructive: var(--color-flare);
+  --border: var(--color-mist);
+  --input: var(--color-mist);
+  --ring: var(--color-signal);
+
+  /* Categorical series, validated (dataviz validator, light, all checks pass):
+     crimson -> blue -> amber -> aqua. Slots 3 and 4 sit under 3:1 on white,
+     so every chart using them carries a legend with values. */
+  --chart-1: var(--color-crimson);
+  --chart-2: #2a78d6;
+  --chart-3: #eda100;
+  --chart-4: #1baf7a;
+  --chart-5: var(--color-slate);
+
+  --radius: 0.625rem;
+
+  --sidebar: #ffffff;
+  --sidebar-foreground: var(--color-slate);
+  --sidebar-primary: var(--color-ink);
+  --sidebar-primary-foreground: #ffffff;
+  --sidebar-accent: var(--color-blush);
+  --sidebar-accent-foreground: var(--color-ember);
+  --sidebar-border: var(--color-mist);
+  --sidebar-ring: var(--color-signal);
+}
+
+.dark {
+  color-scheme: dark;
+  --paper: #1e1e1e;      /* graphite */
+  --mist: #3d3d3d;       /* cinder */
+  --slate: #a0a4a8;      /* disabled-fg: the site's light grey */
+  /* Status inks lifted for a dark ground: the same hues mixed toward white. */
+  --moss: color-mix(in oklab, #0b5b3c, white 55%);
+  --amber-ink: var(--color-amber);
+  --sky-ink: color-mix(in oklab, var(--color-sky), white 40%);
+  --amber-soft: color-mix(in oklab, var(--color-amber) 16%, #1a1a1a);
+  --moss-soft: color-mix(in oklab, #0b5b3c 45%, #1a1a1a);
+  --flare-soft: color-mix(in oklab, var(--color-flare) 20%, #1a1a1a);
+  --sky-soft: color-mix(in oklab, var(--color-sky) 22%, #1a1a1a);
+  --slate-soft: #282828; /* ash */
+  --brand-soft: var(--color-oxblood);
+  --brand-ink: var(--color-blush);
+
+  --background: var(--color-onyx);
+  --foreground: #fbfbfb;          /* menu-fg */
+  --card: #1a1a1a;                /* the site's menu overlay */
+  --card-foreground: #fbfbfb;
+  --popover: #1e1e1e;             /* graphite */
+  --popover-foreground: #fbfbfb;
+  --primary: #fbfbfb;             /* the black CTA inverts to near-white */
+  --primary-foreground: var(--color-onyx);
+  --secondary: #1e1e1e;
+  --secondary-foreground: #fbfbfb;
+  --muted: #1e1e1e;
+  --muted-foreground: #a0a4a8;
+  --accent: #282828;
+  --accent-foreground: #fbfbfb;
+  --destructive: var(--color-flare);
+  --border: #282828;              /* ash */
+  --input: #3d3d3d;               /* cinder */
+  --ring: var(--color-signal);
+
+  /* Same hues stepped for the dark card (validator, dark, #1a1a1a: all pass). */
+  --chart-1: var(--color-crimson);
+  --chart-2: #3987e5;
+  --chart-3: #c98500;
+  --chart-4: #199e70;
+  --chart-5: #a0a4a8;
+
+  --sidebar: #0f1010;             /* the site's nav bar, opaque */
+  --sidebar-foreground: #a0a4a8;
+  --sidebar-primary: #fbfbfb;
+  --sidebar-primary-foreground: var(--color-onyx);
+  --sidebar-accent: var(--color-oxblood);
+  --sidebar-accent-foreground: var(--color-blush);
+  --sidebar-border: #282828;
+  --sidebar-ring: var(--color-signal);
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  body {
+    @apply bg-background text-foreground;
+    -webkit-font-smoothing: antialiased;
+  }
+  html {
+    @apply font-sans;
   }
 }
 
-body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+/* The auth screens' brand panel: the site's entry-screen ground. */
+@utility bg-entry {
+  background-image: linear-gradient(180deg, var(--color-ink) 0%, var(--color-char) 100%);
+}
+
+/* Tabular figures for money and counts, so columns line up. */
+@utility tabular {
+  font-variant-numeric: tabular-nums;
 }
