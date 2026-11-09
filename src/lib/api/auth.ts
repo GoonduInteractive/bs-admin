@@ -3,30 +3,24 @@ import { cookies } from "next/headers";
 import { cache } from "react";
 import { z } from "zod";
 import type { AdminUser } from "@/types";
-import { ApiError, LIVE, SESSION_COOKIE, apiFetch, failureMessage, mockDelay } from "./client";
+import { ApiError, SESSION_COOKIE, apiFetch, failureMessage } from "./client";
 
 /**
  * Admin auth: a password, then a six-digit code emailed to the admin.
  *
- * LIVE: `POST /v1/admin/auth/login` checks the password and returns a
+ * `POST /v1/admin/auth/login` checks the password and returns a
  * short-lived token, which the pending cookie holds while the admin reads their
  * email. `POST /v1/admin/auth/verify-login` trades that token and the code for
  * the access token, which the session cookie holds until the token expires.
  * The profile is `GET /v1/admin/auth/profile`. There is no refresh token: when
  * the access token runs out, the next call gets a 401 and `apiFetch` sends the
  * admin back to /login.
- *
- * MOCK: any valid email with a password of 8+ characters signs in, and the
- * code is always DEMO_CODE.
  */
 
 export { SESSION_COOKIE };
 export const PENDING_COOKIE = "bs_admin_pending";
-export const DEMO_CODE = "123456";
-/** On mock data: the sign-in screen shows the any-password hint. */
-export const DEMO = !LIVE;
 
-/** One working day: the mock's session, and the fallback when a token carries no expiry. */
+/** One working day: the fallback when a token carries no expiry. */
 const SESSION_MAX_AGE = 60 * 60 * 8;
 const PENDING_MAX_AGE = 60 * 10;
 
@@ -34,8 +28,8 @@ const COOKIE = { httpOnly: true, sameSite: "lax", path: "/", secure: process.env
 
 type Result = { ok: true } | { ok: false; error: string };
 
-/** A sign-in waiting for its code: who, and (live) the short token the code is checked against. */
-const pendingSchema = z.object({ email: z.string(), token: z.string().optional() });
+/** A sign-in waiting for its code: who, and the short token the code is checked against. */
+const pendingSchema = z.object({ email: z.string(), token: z.string() });
 type Pending = z.infer<typeof pendingSchema>;
 
 async function readPending(): Promise<Pending | null> {
@@ -65,28 +59,8 @@ function secondsLeft(token: string): number {
   return SESSION_MAX_AGE;
 }
 
-function adminFromEmail(email: string): AdminUser {
-  const local = email.split("@")[0] ?? "admin";
-  const name = local
-    .split(/[._-]/)
-    .filter(Boolean)
-    .map((w) => w[0].toUpperCase() + w.slice(1))
-    .join(" ");
-  return { id: "adm_0001", name: name || "Admin", email, role: "admin", emailVerified: true };
-}
-
 /** Step 1. Checks the password and starts the email-verification step. */
 export async function signIn(email: string, password: string): Promise<Result> {
-  if (!LIVE) {
-    await mockDelay(500);
-    if (password.length < 8) return { ok: false, error: "Wrong email or password" };
-    if (email.toLowerCase().endsWith("@blocked.test")) {
-      return { ok: false, error: "This account has been disabled. Contact the studio owner." };
-    }
-    await writePending({ email });
-    return { ok: true };
-  }
-
   try {
     const { token } = await apiFetch("/v1/admin/auth/login", z.object({ token: z.string() }), {
       method: "POST",
@@ -113,16 +87,7 @@ export async function verifyCode(code: string): Promise<Result> {
   const pending = await readPending();
   const expired = { ok: false, error: "Your sign-in has expired. Start again." } as const;
 
-  if (!LIVE) {
-    await mockDelay(500);
-    if (!pending) return expired;
-    if (code !== DEMO_CODE) return { ok: false, error: "That code is not right. Check the email and try again." };
-    jar.delete(PENDING_COOKIE);
-    jar.set(SESSION_COOKIE, pending.email, { ...COOKIE, maxAge: SESSION_MAX_AGE });
-    return { ok: true };
-  }
-
-  if (!pending?.token) return expired;
+  if (!pending) return expired;
   try {
     const { access_token } = await apiFetch("/v1/admin/auth/verify-login", z.object({ access_token: z.string() }), {
       method: "POST",
@@ -138,13 +103,11 @@ export async function verifyCode(code: string): Promise<Result> {
 }
 
 /**
- * Sends a new code. LIVE: the API has no resend endpoint yet, and the password
+ * Sends a new code. The API has no resend endpoint yet, and the password
  * is never kept to sign in again behind the admin's back, so they start over.
  */
 export async function resendCode(): Promise<Result> {
-  if (LIVE) return { ok: false, error: "Codes can't be resent yet. Go back and sign in again for a new one." };
-  await mockDelay(400);
-  return { ok: true };
+  return { ok: false, error: "Codes can't be resent yet. Go back and sign in again for a new one." };
 }
 
 /** Ends the session here. The API has no sign-out endpoint; the token simply stops being sent. */
@@ -160,7 +123,6 @@ const profileSchema = z.object({ email: z.string(), first_name: z.string(), last
 export const getCurrentAdmin = cache(async (): Promise<AdminUser | null> => {
   const session = (await cookies()).get(SESSION_COOKIE)?.value;
   if (!session) return null;
-  if (!LIVE) return adminFromEmail(session);
 
   const p = await apiFetch("/v1/admin/auth/profile", profileSchema);
   const name = `${p.first_name} ${p.last_name}`.trim();

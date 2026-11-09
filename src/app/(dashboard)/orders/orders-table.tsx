@@ -5,7 +5,7 @@ import Link from "next/link";
 import { DataTable, type Column, type Filter } from "@/components/shared/data-table";
 import { StatusBadge } from "@/components/shared/status-badge";
 import { formatDate, formatNaira } from "@/lib/format";
-import { ORDER_STATUS, PAYMENT_METHOD } from "@/lib/labels";
+import { ORDER_STATUS, PAYMENT_METHOD, orderBadge } from "@/lib/labels";
 import type { Order } from "@/types";
 import { OrderRowMenu } from "./order-status-menu";
 
@@ -36,15 +36,18 @@ const columns: Column<Order>[] = [
   {
     id: "items",
     header: "Items",
-    cell: (o) => (
-      <div className="max-w-56">
-        <p className="truncate">{o.lines[0].name}</p>
-        <p className="text-xs text-muted-foreground">
-          {[o.lines[0].colour, o.lines[0].size].filter(Boolean).join(" · ")}
-          {o.lines.length > 1 && ` + ${o.lines.length - 1} more`}
-        </p>
-      </div>
-    ),
+    cell: (o) =>
+      o.lines[0] ? (
+        <div className="max-w-56">
+          <p className="truncate">{o.lines[0].name}</p>
+          <p className="text-xs text-muted-foreground">
+            {[o.lines[0].colour, o.lines[0].size].filter(Boolean).join(" · ")}
+            {o.lines.length > 1 && ` + ${o.lines.length - 1} more`}
+          </p>
+        </div>
+      ) : (
+        <span className="text-muted-foreground">—</span>
+      ),
     csv: (o) => o.lines.map((l) => `${l.quantity}x ${l.name}`).join("; "),
   },
   {
@@ -58,15 +61,15 @@ const columns: Column<Order>[] = [
   {
     id: "payment",
     header: "Payment",
-    cell: (o) => <span className="text-muted-foreground">{PAYMENT_METHOD[o.paymentMethod]}</span>,
-    csv: (o) => PAYMENT_METHOD[o.paymentMethod],
+    cell: (o) => <span className="text-muted-foreground">{o.paymentMethod ? PAYMENT_METHOD[o.paymentMethod] : "—"}</span>,
+    csv: (o) => (o.paymentMethod ? PAYMENT_METHOD[o.paymentMethod] : ""),
   },
   {
     id: "status",
     header: "Status",
-    cell: (o) => <StatusBadge {...ORDER_STATUS[o.status]} />,
+    cell: (o) => <StatusBadge {...orderBadge(o)} />,
     sortValue: (o) => o.status,
-    csv: (o) => ORDER_STATUS[o.status].label,
+    csv: (o) => orderBadge(o).label,
   },
   {
     id: "date",
@@ -78,46 +81,49 @@ const columns: Column<Order>[] = [
   {
     id: "actions",
     header: <span className="sr-only">Actions</span>,
-    cell: (o) => <OrderRowMenu id={o.id} reference={o.reference} status={o.status} />,
+    cell: (o) => <OrderRowMenu id={o.id} reference={o.reference} status={o.status} current={o.apiStatus} />,
     className: "w-12 text-right",
   },
 ];
 
-const filters: Filter<Order>[] = [
-  {
-    id: "status",
-    label: "Status",
-    options: Object.entries(ORDER_STATUS).map(([value, s]) => ({ value, label: s.label })),
-    predicate: (o, v) => o.status === v,
-  },
-  {
-    id: "item",
-    label: "Item",
-    options: [
-      { value: "prd_hoodie", label: "Goondu Hoodie" },
-      { value: "prd_tee", label: "Goondu Tee" },
-      { value: "prd_tote", label: "Goondu Tote" },
-      { value: "prd_beanie", label: "Goondu Beanie" },
-      { value: "prd_trial", label: "Trial of the Gods Vol. 1" },
-    ],
-    predicate: (o, v) => o.lines.some((l) => l.refId === v),
-  },
-  {
-    id: "payment",
-    label: "Payment",
-    options: Object.entries(PAYMENT_METHOD).map(([value, label]) => ({ value, label })),
-    predicate: (o, v) => o.paymentMethod === v,
-  },
-];
+/** Filters offer only what the orders contain: the items actually ordered, the payment methods actually used. */
+function filtersFor(orders: Order[]): Filter<Order>[] {
+  // A line the API sent without its SKU can't be filtered by.
+  const items = new Map(orders.flatMap((o) => o.lines.filter((l) => l.refId).map((l) => [l.refId, l.name] as const)));
+  const methods = new Set(orders.flatMap((o) => (o.paymentMethod ? [o.paymentMethod] : [])));
+  return [
+    {
+      id: "status",
+      label: "Status",
+      options: Object.entries(ORDER_STATUS).map(([value, s]) => ({ value, label: s.label })),
+      predicate: (o, v) => o.status === v,
+    },
+    {
+      id: "item",
+      label: "Item",
+      options: [...items].map(([value, label]) => ({ value, label })).sort((a, b) => a.label.localeCompare(b.label)),
+      predicate: (o, v) => o.lines.some((l) => l.refId === v),
+    },
+    {
+      id: "payment",
+      label: "Payment",
+      options: Object.entries(PAYMENT_METHOD)
+        .filter(([value]) => methods.has(value as keyof typeof PAYMENT_METHOD))
+        .map(([value, label]) => ({ value, label })),
+      predicate: (o, v) => o.paymentMethod === v,
+    },
+  ];
+}
 
 export function OrdersTable({ orders, initialQuery }: { orders: Order[]; initialQuery?: string }) {
+  const filters = filtersFor(orders);
   return (
     <DataTable
       rows={orders}
       columns={columns}
       getRowId={(o) => o.id}
       rowHref={(o) => `/orders/${o.id}`}
-      searchText={(o) => `${o.reference} ${o.customer.name} ${o.customer.email} ${o.customer.handle ?? ""}`}
+      searchText={(o) => `${o.reference} ${o.customer.name} ${o.customer.email ?? ""} ${o.customer.handle ?? ""}`}
       searchPlaceholder="Search by order, name or email…"
       initialQuery={initialQuery}
       filters={filters}

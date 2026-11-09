@@ -4,7 +4,7 @@ import Link from "next/link";
 import { EmptyState } from "@/components/shared/empty-state";
 import { PageHeader } from "@/components/shared/page-header";
 import { Button } from "@/components/ui/button";
-import { getComics, getVolumes } from "@/lib/api/merch";
+import { getComics, getCoverStylesSaved, getVolumes } from "@/lib/api/merch";
 import { nextChapterNumber } from "@/lib/comics";
 import { ComicForm } from "../comic-form";
 
@@ -13,7 +13,7 @@ export const metadata: Metadata = { title: "Add chapter" };
 /** `?volume=<id>` pre-picks the volume - how a volume's "Add chapter" lands here. */
 export default async function NewChapterPage({ searchParams }: PageProps<"/comics/new">) {
   const { volume } = await searchParams;
-  const [comics, volumes] = await Promise.all([getComics(), getVolumes()]);
+  const [comics, volumes, coverStyles] = await Promise.all([getComics(), getVolumes(), getCoverStylesSaved()]);
   const nextChapter = Object.fromEntries(volumes.map((v) => [v.id, nextChapterNumber(comics, v.id)]));
   const start = typeof volume === "string" && volumes.some((v) => v.id === volume) ? volume : undefined;
 
@@ -34,7 +34,7 @@ export default async function NewChapterPage({ searchParams }: PageProps<"/comic
           />
         </div>
       ) : (
-        <ComicForm volumes={volumes} nextChapter={nextChapter} startVolumeId={start} />
+        <ComicForm volumes={volumes} nextChapter={nextChapter} startVolumeId={start} coverStyles={coverStyles} />
       )}
     </>
   );

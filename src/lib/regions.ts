@@ -10,8 +10,8 @@ export const GLOBAL_REGION = "global";
 
 /**
  * id -> name, for tables and cards. Archived regions keep their name. Keyed by
- * slug as well as id: the API's ids are uuids, while mock records (tournaments,
- * the dashboard) still point at slugs.
+ * slug as well as id: the API's ids are uuids, but some replies (tournaments,
+ * the dashboard) name a region by its slug.
  */
 export function regionNames(regions: readonly Region[]): Record<RegionId, string> {
   return Object.fromEntries(regions.flatMap((r) => [[r.slug, r.name], [r.id, r.name]]));

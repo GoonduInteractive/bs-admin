@@ -1,10 +1,9 @@
 /**
  * Admin data contracts.
  *
- * THESE ARE THE SHAPES THE BACKEND WILL RETURN. Pages and components only ever
- * see these types, and only ever get them through `src/lib/api/*`. Today those
- * adapters resolve from the fixtures in `src/lib/mock/*`; when the endpoints
- * land, the adapters change and nothing above them does.
+ * Pages and components only ever see these types, and only ever get them
+ * through `src/lib/api/*`, which turn the API's replies into them. When a reply
+ * changes, the adapter changes and nothing above it does.
  *
  * Money is an integer number of naira, never a float and never a formatted
  * string - the same rule the public site follows. Dates are ISO strings.
@@ -16,7 +15,7 @@
 
 /**
  * A region's id, from the admin-managed Regions list: the API's id (a uuid),
- * or on mock data and older records its slug (e.g. "lagos"). `lib/regions.ts`
+ * or where a reply names it that way, its slug (e.g. "lagos"). `lib/regions.ts`
  * resolves either.
  */
 export type RegionId = string;
@@ -34,6 +33,8 @@ export type Region = {
   name: string;
   status: "active" | "archived";
   createdAt: string;
+  /** How many players are in it (since 2026-11-02). */
+  playerCount?: number;
 };
 
 export type Paginated<T> = {
@@ -57,6 +58,22 @@ export type AdminUser = {
   avatar?: string;
   emailVerified: boolean;
 };
+
+/** Someone who can sign in to the admin: Settings > Team. */
+export type TeamMember = {
+  id: string;
+  name: string;
+  email: string;
+  role: AdminRole;
+  /** Their last sign-in; null if they haven't signed in yet. Left out when the API's date can't be read. */
+  lastSeen?: string | null;
+};
+
+/** Settings > Store. */
+export type StoreSettings = { lowStockAt: number };
+
+/** Settings > Notifications: which emails the signed-in admin gets. */
+export type NotificationSettings = { orders: boolean; stock: boolean; registrations: boolean; results: boolean };
 
 /* ------------------------------------------------------------------ */
 /* Products                                                            */
@@ -141,6 +158,41 @@ export type Product = ApparelProduct | ComicProduct;
 
 export type StockStatus = "inStock" | "lowStock" | "outOfStock";
 
+/**
+ * A product as the Products table lists it. The API's product list returns
+ * these figures rather than whole products (no variants), so the table and the
+ * stock notices work from this.
+ */
+export type ProductRow = {
+  id: string;
+  slug: string;
+  name: string;
+  description: string;
+  image: string;
+  type: ProductType;
+  status: ProductStatus;
+  exclusive: boolean;
+  /** "₦10,000", "₦10,000 – ₦12,000", "Free", "Not on sale". */
+  priceLabel: string;
+  /** The lowest price, for sorting; null when nothing is on sale. */
+  priceFrom: number | null;
+  /** Comics: each format on sale, online first. Empty for merch. */
+  formats: { format: ComicFormat; price: number; free: boolean }[];
+  /** Units on hand; null for a comic sold only online. */
+  stock: number | null;
+  stockStatus: StockStatus | null;
+  sold: number;
+  createdAt: string;
+};
+
+/** The Products page's headline figures. Money in naira. */
+export type ProductStats = {
+  live: { total: number; merch: number; comics: number };
+  sold: { total: number; merch: number; comics: number };
+  restock: { count: number; titles: string[] };
+  stockValue: number;
+};
+
 /* ------------------------------------------------------------------ */
 /* Comics                                                              */
 /* ------------------------------------------------------------------ */
@@ -165,23 +217,8 @@ export type ComicVolume = {
   description: string;
   /** The collected edition's cover. Absent, its first chapter's cover stands in. */
   cover?: string;
-  /** The printed volume, sold as one book. Online, a volume is only ever bought chapter by chapter. */
-  edition?: VolumeEdition;
-  updatedAt: string;
-};
-
-/**
- * The printed collected edition (the team's rules, 2026-10-01). It can be on
- * sale only while the volume is complete - every chapter published - and an
- * admin has switched it on. If the volume stops being complete it pauses
- * itself, and `pausedReason` says why.
- */
-export type VolumeEdition = {
-  enabled: boolean;
-  price: number;
-  stock: number;
-  unitsSold: number;
-  pausedReason?: string;
+  /** The API doesn't send a volume's dates. */
+  updatedAt?: string;
 };
 
 /**
@@ -201,27 +238,64 @@ export type Comic = {
   description: string;
   status: ComicStatus;
   cover: string;
+  /**
+   * How the site draws the cover. "torn": its torn band over the top, with the
+   * volume tag and title (art with no title on it). "full": the file as it is
+   * (art that carries its own). Absent: "torn", as the site does.
+   */
+  coverStyle?: CoverStyle;
+  /** The band's title. Empty uses the chapter title; a newline breaks the line. */
+  coverTitle?: string;
+  /** The plate above the title, "VOL. 1". Empty: no plate. Absent: never set. */
+  coverVolume?: string;
+  coverBand?: CoverBand;
   pages: ComicPage[];
   /** Publish date, or the scheduled date when status is "scheduled". */
   publishAt?: string;
   reads: number;
-  updatedAt: string;
+  /** Absent when the API doesn't send it. */
+  updatedAt?: string;
+};
+
+export type CoverStyle = "torn" | "full";
+
+/** The site's band colours, as its news covers offer them (`COVER_BAND` in `lib/labels.ts`). */
+export type CoverBand = "menu" | "dusk" | "clot" | "ember" | "oxblood" | "blood" | "carmine" | "crimson" | "abyss" | "ash";
+
+/** The Comics page's headline counts. */
+export type ComicStats = {
+  volumes: number;
+  chapters: number;
+  published: number;
+  unpublished: number;
+  reads: number;
+  copiesSold: number;
+  /** Chapters with a store listing. */
+  inStore: number;
 };
 
 /* ------------------------------------------------------------------ */
 /* Orders                                                              */
 /* ------------------------------------------------------------------ */
 
-export type OrderStatus = "pending" | "processing" | "inTransit" | "delivered" | "cancelled";
-export type PaymentMethod = "bankTransfer" | "card";
+/**
+ * `pending` is paid and waiting to be worked on; `awaitingPayment` is placed,
+ * not paid yet.
+ */
+export type OrderStatus = "awaitingPayment" | "pending" | "processing" | "inTransit" | "delivered" | "cancelled" | "refunded";
+/** The API's own statuses. `OrderStatus` folds `paid` into `pending`, and `fulfilled` into `delivered`. */
+export type ApiOrderStatus = "pending_payment" | "paid" | "fulfilled" | "cancelled" | "refunded" | "processing" | "in_transit" | "delivered";
+/** `paystack` is what the API reports: Paystack takes cards, transfers and USSD alike. */
+export type PaymentMethod = "paystack" | "bankTransfer" | "card";
 
+/** One line of an order. The API sends a SKU but no product name or picture yet, so `name` may be the SKU and `image` absent. */
 export type OrderLine = {
   kind: "product" | "comic";
   refId: string;
   name: string;
-  image: string;
+  image?: string;
   colour?: string;
-  size?: ProductSize;
+  size?: ProductSize | string;
   /** Comics only: which edition was bought. Online needs no shipping. */
   format?: ComicFormat;
   quantity: number;
@@ -235,40 +309,56 @@ export type OrderLine = {
  */
 export type DeliveryMethod = "homeDelivery" | "pickup";
 
-/** Where it ships. Pickup needs only the state and local government, so the street and city are absent. */
+/**
+ * Where it ships. Pickup needs only the state and local government, so the
+ * street and city are absent. The API sends the address as one line of text,
+ * `full`, rather than in parts.
+ */
 export type Address = {
+  full?: string;
   line1?: string;
   city?: string;
   /** Local government, from `nigeria-lga-data` (e.g. "Nsukka"). */
-  lga: string;
-  state: string;
-  country: string;
-  phone: string;
+  lga?: string;
+  state?: string;
+  zipcode?: string;
+  country?: string;
+  phone?: string;
 };
 
+/** Fields the API's order record doesn't carry are optional: a screen shows a dash, never a made-up value. */
 export type Order = {
   id: string;
   reference: string;
-  customer: { id: string; name: string; email: string; handle?: string };
+  customer: { id: string; name: string; email?: string; handle?: string };
   lines: OrderLine[];
   subtotal: number;
   pointsDiscount: number;
-  shipping: number;
+  shipping?: number;
   total: number;
   status: OrderStatus;
-  paymentMethod: PaymentMethod;
+  paymentMethod?: PaymentMethod;
   /** Present when something ships: Home Delivery or Pickup. */
   deliveryMethod?: DeliveryMethod;
   shippingAddress?: Address;
   placedAt: string;
   timeline: { status: OrderStatus; at: string }[];
+  /** Where the API says it stands, finer than `status`. */
+  apiStatus?: ApiOrderStatus;
+  /**
+   * The API's own stages for this order (`timelines`), in its order - reached
+   * or not. The order page draws Progress from these; absent (the order list
+   * sends none), it uses the standard flow.
+   */
+  stages?: OrderStatus[];
 };
 
 /* ------------------------------------------------------------------ */
 /* Transactions                                                        */
 /* ------------------------------------------------------------------ */
 
-export type TransactionType = "merch" | "comic" | "prizePayout" | "refund";
+/** `order` and `tournamentEntry` are the API's: it doesn't say whether a store order was merch or a comic. */
+export type TransactionType = "merch" | "comic" | "order" | "tournamentEntry" | "prizePayout" | "refund";
 export type TransactionStatus = "successful" | "pending" | "failed" | "reversed";
 
 export type Transaction = {
@@ -278,7 +368,8 @@ export type Transaction = {
   /** Money into Goondu is positive; payouts and refunds are money out. */
   direction: "in" | "out";
   amount: number;
-  fee: number;
+  /** The processor's fee. The API doesn't report fees, so live transactions have none. */
+  fee?: number;
   status: TransactionStatus;
   method: PaymentMethod;
   party: { name: string; email: string };
@@ -286,6 +377,34 @@ export type Transaction = {
   relatedId?: string;
   createdAt: string;
 };
+
+/* ------------------------------------------------------------------ */
+/* Community                                                           */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Where a note is in moderation. The API's own `moderation_status`: a note a
+ * player posts is `pending`, and only `approved` ones are on the public
+ * Community Wall.
+ */
+export type NoteStatus = "pending" | "approved" | "rejected";
+
+/** A note a player posted to the Community Wall. */
+export type Note = {
+  id: string;
+  /** What they wrote: 3 to 140 characters, the API's bounds. */
+  body: string;
+  /** `handle` is null for a player with no username yet; `id` isn't in the API's reply. */
+  author: { id?: string; handle: string | null; name: string };
+  status: NoteStatus;
+  likes: number;
+  postedAt: string;
+  /** The admin who approved or rejected it, and when. Absent while pending. */
+  moderatedBy?: string;
+  moderatedAt?: string;
+};
+
+export type NoteStats = { pending: number; approved: number; rejected: number; postedThisWeek: number };
 
 /* ------------------------------------------------------------------ */
 /* Tournaments                                                         */
@@ -322,7 +441,13 @@ export type Stage = { key: StageKey; status: StageStatus; startsAt?: string; end
  * opponent (an odd count, a disqualified or suspended player) and always
  * loses, so the real player advances.
  */
-export type MatchSide = { handle: string; points?: number; bye?: true };
+export type MatchSide = {
+  handle: string;
+  points?: number;
+  bye?: true;
+  /** The player's id, which a result names as the winner. */
+  playerId?: string;
+};
 
 export type Match = {
   id: string;
@@ -342,6 +467,8 @@ export type BracketRound = { key: RoundKey; matches: Match[] };
 
 export type Participant = {
   playerId: string;
+  /** The entry's own id, which disqualifying names. */
+  entryId?: string;
   handle: string;
   region: RegionId;
   seed: number;
@@ -381,6 +508,14 @@ export type Tournament = {
   bracket: BracketRound[];
   participants: Participant[];
   featured: boolean;
+  /**
+   * The API's qualifier leaderboard, when more players entered than the
+   * 32-seat bracket holds - ranked, with who goes through. Absent: the admin
+   * ranks the field itself (`qualifierRanking`).
+   */
+  qualifier?: { cutoff: number; entries: { rank: number; playerId: string; handle: string; points: number; through: boolean }[] };
+  /** The rounds the field will play, before the bracket is drawn. */
+  projected?: { label: string; matches: number }[];
 };
 
 /* ------------------------------------------------------------------ */
@@ -424,13 +559,51 @@ export type PlayerStats = {
 /* Dashboard                                                           */
 /* ------------------------------------------------------------------ */
 
-export type Trend = { value: number; change: number };
+/** `change` is a percentage against the range before; null when there's nothing to compare with. */
+export type Trend = { value: number; change: number | null };
 
 export type DashboardSummary = {
   revenue: Trend;
   orders: Trend;
   players: Trend;
   activeTournaments: Trend;
+};
+
+/** One line of the dashboard's Recent orders. */
+export type DashboardRecentOrder = {
+  id: string;
+  reference: string;
+  customer: string;
+  image?: string;
+  /** "Goondu Hoodie + 2 more". */
+  summary: string;
+  status: OrderStatus;
+  total: number;
+  placedAt: string;
+};
+
+/** A tournament on the dashboard. `slug` is absent when it has no page here yet. */
+export type DashboardTournament = {
+  id: string;
+  slug?: string;
+  name: string;
+  status: TournamentStatus;
+  /** The region's name, ready to print. */
+  region: string;
+  prizePool: number;
+  slots: { taken: number; total: number | null };
+};
+
+/** Everything the dashboard shows, for one range. */
+export type Dashboard = {
+  summary: DashboardSummary;
+  registrationsOpen: number;
+  series: TimeSeriesPoint[];
+  streams: ShareSlice[];
+  units: ShareSlice[];
+  playersByRegion: ShareSlice[];
+  recentOrders: DashboardRecentOrder[];
+  tournaments: DashboardTournament[];
 };
 
 export type TimeSeriesPoint = { label: string; value: number };
@@ -470,5 +643,15 @@ export type FreeShippingPromo = {
   minimumOrder: number;
   startsAt?: string;
   endsAt?: string;
-  updatedAt: string;
+  /** The API doesn't say when the promotion was last changed. */
+  updatedAt?: string;
+};
+
+/** The Shipping page's cards. Prices are whole naira; a range is null before anything is priced. */
+export type ShippingStats = {
+  pricedStates: number;
+  /** Cheapest to dearest, local governments priced on their own included. */
+  homeDelivery: { min: number; max: number } | null;
+  pickup: { min: number; max: number } | null;
+  promo: "off" | "scheduled" | "live" | "ended";
 };

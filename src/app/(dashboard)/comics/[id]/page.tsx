@@ -6,9 +6,9 @@ import { PageHeader } from "@/components/shared/page-header";
 import { StatusBadge } from "@/components/shared/status-badge";
 import { Button } from "@/components/ui/button";
 import { NotFoundError } from "@/lib/api/client";
-import { getComic, getComics, getProducts, getVolumes } from "@/lib/api/merch";
+import { getComic, getComics, getCoverStylesSaved, getProducts, getVolumes } from "@/lib/api/merch";
 import { nextChapterNumber } from "@/lib/comics";
-import { formatCount, formatDate } from "@/lib/format";
+import { formatDate } from "@/lib/format";
 import { COMIC_STATUS } from "@/lib/labels";
 import type { ComicProduct } from "@/types";
 import { ComicForm, type ChapterSale } from "../comic-form";
@@ -21,7 +21,7 @@ export default async function ChapterPage({ params }: PageProps<"/comics/[id]">)
     if (e instanceof NotFoundError) notFound();
     throw e;
   });
-  const [comics, volumes, products] = await Promise.all([getComics(), getVolumes(), getProducts()]);
+  const [comics, volumes, products, coverStyles] = await Promise.all([getComics(), getVolumes(), getProducts(), getCoverStylesSaved()]);
   const record = products.find((p): p is ComicProduct => p.type === "comics" && p.comicId === comic.id);
   const volume = volumes.find((v) => v.id === comic.volumeId);
   const nextChapter = Object.fromEntries(volumes.map((v) => [v.id, nextChapterNumber(comics, v.id)]));
@@ -36,7 +36,14 @@ export default async function ChapterPage({ params }: PageProps<"/comics/[id]">)
             <StatusBadge {...COMIC_STATUS[comic.status]} className="font-sans text-xs tracking-normal normal-case" />
           </span>
         }
-        description={`${volume ? `Vol. ${volume.number}, ${volume.title} · ` : ""}${comic.pages.length} pages · ${formatCount(comic.reads)} reads · last edited ${formatDate(comic.updatedAt)}`}
+        description={[
+          volume && `Vol. ${volume.number}, ${volume.title}`,
+          `${comic.pages.length} pages`,
+          false,
+          comic.updatedAt && `last edited ${formatDate(comic.updatedAt)}`,
+        ]
+          .filter(Boolean)
+          .join(" · ")}
         actions={
           <Button variant="outline" size="xl" className="bg-card" render={<Link href={`/comics/${comic.id}/read`} />} disabled={comic.pages.length === 0}>
             <Eye />
@@ -44,7 +51,7 @@ export default async function ChapterPage({ params }: PageProps<"/comics/[id]">)
           </Button>
         }
       />
-      <ComicForm comic={comic} volumes={volumes} nextChapter={nextChapter} sale={record && saleOf(record)} />
+      <ComicForm comic={comic} volumes={volumes} nextChapter={nextChapter} sale={record && saleOf(record)} coverStyles={coverStyles} />
     </>
   );
 }

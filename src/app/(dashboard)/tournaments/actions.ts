@@ -13,12 +13,12 @@ import {
   saveTournament,
   setTournamentStatus,
 } from "@/lib/api/competition";
+import { failureMessage } from "@/lib/api/client";
 import { fromLagosInput } from "@/lib/lagos-time";
 import { tournamentSchema, type TournamentInput } from "@/lib/schemas";
 import { GLOBAL_REGION } from "@/lib/regions";
 import { newStages } from "@/lib/tournaments";
 import type { Tournament } from "@/types";
-
 
 function slugify(s: string) {
   return s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "");
@@ -77,14 +77,22 @@ export async function saveTournamentAction(slug: string | null, input: Tournamen
     featured: v.featured,
   };
 
-  // Only one tournament leads the Competition page at a time.
-  if (tournament.featured) {
-    for (const t of await getTournaments()) if (t.featured && t.id !== tournament.id) await saveTournament({ ...t, featured: false });
+  let saved: Tournament;
+  try {
+    // Only one tournament leads the Competition page at a time. The whole record
+    // is saved back (the edit wants it all), not the list's row.
+    if (tournament.featured) {
+      for (const t of all) {
+        if (t.featured && t.id !== tournament.id) await saveTournament({ ...(await getTournament(t.slug)), featured: false }, false);
+      }
+    }
+    // The API names the slug; the page goes to the one it gave.
+    saved = await saveTournament(tournament, !existing);
+  } catch (e) {
+    return { error: failureMessage(e, "Could not save the tournament") };
   }
-
-  await saveTournament(tournament);
-  refresh(tournament.slug);
-  redirect(`/tournaments/${tournament.slug}`);
+  refresh(saved.slug);
+  redirect(`/tournaments/${saved.slug}`);
 }
 
 const status = z.enum(["draft", "comingSoon", "registrationOpen", "active", "completed", "cancelled"]);
@@ -92,8 +100,12 @@ const status = z.enum(["draft", "comingSoon", "registrationOpen", "active", "com
 export async function setStatusAction(slug: string, next: z.infer<typeof status>) {
   const parsed = status.safeParse(next);
   if (!parsed.success) return { error: "Unknown status" };
-  const t = await setTournamentStatus(slug, parsed.data);
-  if (parsed.data === "registrationOpen" && t.stages[0].status === "upcoming") t.stages[0].status = "inProgress";
+  try {
+    const t = await setTournamentStatus(slug, parsed.data);
+    if (parsed.data === "registrationOpen" && t.stages[0]?.status === "upcoming") t.stages[0].status = "inProgress";
+  } catch (e) {
+    return { error: failureMessage(e, "Could not change the status") };
+  }
   refresh(slug);
   return { ok: true as const };
 }
@@ -120,7 +132,7 @@ export async function advanceStageAction(slug: string, when?: z.infer<typeof sch
   try {
     await advanceStage(slug, startsAt ? { startsAt, endsAt } : undefined);
   } catch (e) {
-    return { error: e instanceof Error ? e.message : "Could not move to the next stage" };
+    return { error: failureMessage(e, "Could not move to the next stage") };
   }
   refresh(slug);
   return { ok: true as const };
@@ -130,7 +142,7 @@ export async function recordResultAction(slug: string, matchId: string, winner: 
   try {
     await recordResult(slug, matchId, winner);
   } catch (e) {
-    return { error: e instanceof Error ? e.message : "Could not record the result" };
+    return { error: failureMessage(e, "Could not record the result") };
   }
   refresh(slug);
   return { ok: true as const };
@@ -146,7 +158,11 @@ export async function disqualifyAction(slug: string, playerId: string, typedHand
   if (!p) return { error: "That player isn't in this tournament" };
   if (p.status === "eliminated" || p.status === "champion") return { error: `@${p.handle} is already out of the tournament` };
   if (typedHandle.trim() !== p.handle) return { error: `Type @${p.handle}'s handle exactly to disqualify them` };
-  await disqualify(slug, playerId);
+  try {
+    await disqualify(slug, playerId);
+  } catch (e) {
+    return { error: failureMessage(e, "Could not disqualify the player") };
+  }
   refresh(slug);
   return { ok: true as const };
 }

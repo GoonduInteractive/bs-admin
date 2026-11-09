@@ -2,7 +2,16 @@
 
 import { redirect } from "next/navigation";
 import { resendCode, signIn, signOut, verifyCode } from "@/lib/api/auth";
-import { loginSchema, verifySchema, type LoginInput, type VerifyInput } from "@/lib/schemas";
+import { failureMessage } from "@/lib/api/client";
+import { acceptInvite } from "@/lib/api/settings";
+import {
+  acceptInviteSchema,
+  loginSchema,
+  verifySchema,
+  type AcceptInviteInput,
+  type LoginInput,
+  type VerifyInput,
+} from "@/lib/schemas";
 
 export type ActionResult = { error: string } | undefined;
 
@@ -35,6 +44,18 @@ export async function verifyAction(input: VerifyInput, next?: string): Promise<A
 export async function resendAction(): Promise<ActionResult> {
   const result = await resendCode();
   if (!result.ok) return { error: result.error };
+}
+
+/** From the invite email: sets their password, then on to sign in. */
+export async function acceptInviteAction(token: string, input: AcceptInviteInput): Promise<ActionResult> {
+  const parsed = acceptInviteSchema.safeParse(input);
+  if (!parsed.success) return { error: parsed.error.issues[0]?.message ?? "Check your password" };
+  try {
+    await acceptInvite(token, parsed.data.password);
+  } catch (e) {
+    return { error: failureMessage(e, "Couldn't accept the invite. Try again.") };
+  }
+  redirect("/login?joined=1");
 }
 
 export async function logoutAction(): Promise<void> {

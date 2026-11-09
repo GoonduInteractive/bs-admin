@@ -1,9 +1,9 @@
 import type { Metadata } from "next";
 import { PageHeader, SectionHeader } from "@/components/shared/page-header";
 import { StatCard } from "@/components/shared/stat-card";
-import { getFreeShipping, getShippingRates } from "@/lib/api/merch";
+import { getFreeShipping, getShippingRates, getShippingStats } from "@/lib/api/merch";
 import { formatCount, formatNaira } from "@/lib/format";
-import { lgasOf, overrideCount, promoPhase } from "@/lib/shipping";
+import { STATES, lgasOf, overrideCount } from "@/lib/shipping";
 import { FreeShippingForm } from "./free-shipping-form";
 import { ShippingTable, type StateRow } from "./shipping-table";
 
@@ -16,16 +16,23 @@ export const metadata: Metadata = { title: "Shipping" };
  * from here once the store reads it.
  */
 export default async function ShippingPage() {
-  const [rates, promo] = await Promise.all([getShippingRates(), getFreeShipping()]);
-  const phase = promoPhase(promo);
-  const rows: StateRow[] = rates.map((s) => ({
-    ...s,
-    lgaList: lgasOf(s.state).map((l) => ({ id: l.id, name: l.name })),
-    overrides: overrideCount(s),
-  }));
-  const homes = rates.map((s) => s.homeDelivery);
-  const pickups = rates.map((s) => s.pickup);
+  const [rates, promo, stats] = await Promise.all([getShippingRates(), getFreeShipping(), getShippingStats()]);
+  const phase = stats.promo;
+  const lgaList = (state: string) => lgasOf(state).map((l) => ({ id: l.id, name: l.name }));
+  // Every state from `nigeria-lga-data` gets a row, priced or not, so an admin can price one the backend
+  // doesn't have yet. A priced state whose name the list doesn't know is kept too, at the end.
+  const rows: StateRow[] = [
+    ...STATES.map((state): StateRow => {
+      const s = rates.find((r) => r.state === state);
+      return s
+        ? { ...s, lgaList: lgaList(state), overrides: overrideCount(s) }
+        : { state, homeDelivery: null, pickup: null, lgas: {}, updatedAt: null, lgaList: lgaList(state), overrides: 0 };
+    }),
+    ...rates.filter((s) => !STATES.includes(s.state)).map((s) => ({ ...s, lgaList: lgaList(s.state), overrides: overrideCount(s) })),
+  ];
   const overrides = rows.reduce((n, r) => n + r.overrides, 0);
+  /** "₦2,500 – ₦5,500", or a dash before anything is priced. */
+  const range = (r: { min: number; max: number } | null) => (r ? `${formatNaira(r.min)} – ${formatNaira(r.max)}` : "—");
 
   return (
     <>
@@ -35,9 +42,13 @@ export default async function ShippingPage() {
       />
 
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        <StatCard label="States priced" value={formatCount(rates.length)} footer={`36 states and the FCT · ${formatCount(overrides)} local governments priced on their own`} />
-        <StatCard label="Home Delivery" value={`${formatNaira(Math.min(...homes))} – ${formatNaira(Math.max(...homes))}`} footer="Cheapest to dearest state" />
-        <StatCard label="Pickup" value={`${formatNaira(Math.min(...pickups))} – ${formatNaira(Math.max(...pickups))}`} footer="Cheapest to dearest state" />
+        <StatCard
+          label="States priced"
+          value={`${formatCount(stats.pricedStates)} of ${formatCount(STATES.length)}`}
+          footer={`36 states and the FCT · ${formatCount(overrides)} local governments priced on their own`}
+        />
+        <StatCard label="Home Delivery" value={range(stats.homeDelivery)} footer="Cheapest to dearest, local governments included" />
+        <StatCard label="Pickup" value={range(stats.pickup)} footer="Cheapest to dearest, local governments included" />
         <StatCard
           label="Free shipping"
           value={{ off: "Off", scheduled: "Scheduled", live: "Live", ended: "Ended" }[phase]}

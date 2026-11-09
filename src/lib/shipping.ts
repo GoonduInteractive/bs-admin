@@ -22,21 +22,6 @@ export const DELIVERY_LABEL: Record<DeliveryMethod, string> = {
   pickup: "Pickup",
 };
 
-/**
- * What shipping costs to a place: the local government's own price if it has
- * one for this method, otherwise the state's. Null when the state has no rates.
- */
-export function shippingQuote(
-  rates: readonly StateShipping[],
-  state: string,
-  lgaId: string | undefined,
-  method: DeliveryMethod,
-): number | null {
-  const s = rates.find((r) => r.state === state);
-  if (!s) return null;
-  return (lgaId ? s.lgas[lgaId]?.[method] : undefined) ?? s[method];
-}
-
 /** How many local governments in a state have a price of their own. */
 export function overrideCount(s: StateShipping): number {
   return Object.values(s.lgas).filter((o) => o.homeDelivery !== undefined || o.pickup !== undefined).length;

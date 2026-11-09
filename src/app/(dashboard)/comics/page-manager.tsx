@@ -5,7 +5,7 @@ import { useRef, useState, type DragEvent } from "react";
 import { toast } from "sonner";
 import { Thumb } from "@/components/shared/thumb";
 import { Button } from "@/components/ui/button";
-import { ACCEPT_IMAGES, checkImage, uploadImage } from "@/lib/upload-client";
+import { ACCEPT_IMAGES, batchesOf, checkImage, uploadImages } from "@/lib/upload-client";
 import { cn } from "@/lib/utils";
 
 export type PageItem = { id: string; src: string };
@@ -39,13 +39,16 @@ export function PageManager({
 
     setProgress({ done: 0, total: good.length });
     const added: PageItem[] = [];
-    for (const file of good) {
+    // Several pages a request (`uploadImages`), in batches that keep their order.
+    for (const batch of batchesOf(good)) {
       try {
-        added.push({ id: crypto.randomUUID(), src: await uploadImage(file) });
+        const urls = await uploadImages(batch);
+        added.push(...urls.map((src) => ({ id: crypto.randomUUID(), src })));
       } catch (e) {
-        toast.error(e instanceof Error ? e.message : `${file.name} failed`);
+        const names = batch.map((f) => f.name).join(", ");
+        toast.error(e instanceof Error ? `${names}: ${e.message}` : `${names} failed`);
       }
-      setProgress((p) => p && { ...p, done: p.done + 1 });
+      setProgress((p) => p && { ...p, done: p.done + batch.length });
     }
     onChange([...value, ...added]);
     setProgress(null);

@@ -14,12 +14,9 @@ import { StatusBadge } from "@/components/shared/status-badge";
 import { Button } from "@/components/ui/button";
 import { Field, FieldDescription, FieldError, FieldGroup, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
-import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
-import { formatNaira } from "@/lib/format";
 import { COMIC_STATUS } from "@/lib/labels";
 import { volumeSchema, type VolumeInput } from "@/lib/schemas";
-import { cn } from "@/lib/utils";
 import type { Comic, ComicVolume } from "@/types";
 import { deleteVolumeAction, saveVolumeAction } from "./actions";
 
@@ -31,18 +28,12 @@ export function VolumeForm({
   volume,
   chapters = [],
   nextNumber = 1,
-  completeness = { total: 0, published: 0, complete: false },
-  printSum = null,
 }: {
   volume?: ComicVolume;
   /** This volume's chapters, in order. */
   chapters?: Comic[];
   /** The number a new volume takes by default. */
   nextNumber?: number;
-  /** How many of its chapters are published: a printed volume needs all of them. */
-  completeness?: { total: number; published: number; complete: boolean };
-  /** What its chapters cost bought separately in print, to price the volume against. */
-  printSum?: number | null;
 }) {
   const router = useRouter();
   const [saving, startSave] = useTransition();
@@ -54,13 +45,10 @@ export function VolumeForm({
       title: volume?.title ?? "",
       description: volume?.description ?? "",
       cover: volume?.cover ?? "",
-      editionEnabled: volume?.edition?.enabled ?? false,
-      editionPrice: volume?.edition?.price ? String(volume.edition.price) : "",
-      editionStock: volume?.edition?.stock ?? 0,
     },
   });
   const { errors } = form.formState;
-  const [cover, editionEnabled] = useWatch({ control: form.control, name: ["cover", "editionEnabled"] });
+  const cover = useWatch({ control: form.control, name: "cover" });
 
   const onSubmit = form.handleSubmit((values) =>
     startSave(async () => {
@@ -133,61 +121,6 @@ export function VolumeForm({
           </Panel>
         )}
 
-        {/* THE PRINTED VOLUME (the team's rules, 2026-10-01). Online, readers buy
-            chapter by chapter, never the volume; in print the whole volume is one
-            book, sold only once every chapter is published. */}
-        <Panel title="Printed volume" description="The whole volume as one printed book. Online, readers always buy it chapter by chapter.">
-          <FieldGroup>
-            <p
-              className={cn(
-                "rounded-lg px-3 py-2.5 text-sm",
-                completeness.complete ? "bg-paper text-foreground" : "bg-amber-soft text-amber-ink",
-              )}
-            >
-              {completeness.complete
-                ? `All ${completeness.total} ${completeness.total === 1 ? "chapter is" : "chapters are"} published, so it can be sold in print.`
-                : completeness.total
-                  ? `${completeness.published} of ${completeness.total} chapters are published. It can be sold in print once every chapter is out.`
-                  : "Add and publish this volume's chapters first."}
-            </p>
-            {volume?.edition?.pausedReason && !volume.edition.enabled && (
-              <p className="text-sm text-flare">
-                Taken off sale: {volume.edition.pausedReason}. Publish it, then switch the printed volume back on.
-              </p>
-            )}
-
-            <Field orientation="horizontal" data-disabled={!completeness.complete || undefined}>
-              <Controller
-                control={form.control}
-                name="editionEnabled"
-                render={({ field }) => (
-                  <Switch id="editionEnabled" checked={field.value} disabled={!completeness.complete && !field.value} onCheckedChange={field.onChange} />
-                )}
-              />
-              <FieldLabel htmlFor="editionEnabled" className="font-normal">
-                Sell Volume {volume?.number ?? nextNumber} in print
-              </FieldLabel>
-            </Field>
-
-            {/* Stays mounted when off, so a price survives switching it off and on. */}
-            <div className={cn("grid gap-4 sm:grid-cols-2", !editionEnabled && "hidden")}>
-              <Field data-invalid={!!errors.editionPrice}>
-                <FieldLabel htmlFor="editionPrice">Price (₦)</FieldLabel>
-                <Input id="editionPrice" type="number" min={500} step={500} inputMode="numeric" className="h-10" aria-invalid={!!errors.editionPrice} {...form.register("editionPrice")} />
-                {printSum ? (
-                  <FieldDescription>Its chapters bought separately in print cost {formatNaira(printSum)}.</FieldDescription>
-                ) : null}
-                <FieldError errors={[errors.editionPrice]} />
-              </Field>
-              <Field data-invalid={!!errors.editionStock}>
-                <FieldLabel htmlFor="editionStock">Copies in stock</FieldLabel>
-                <Input id="editionStock" type="number" min={0} inputMode="numeric" className="h-10" aria-invalid={!!errors.editionStock} {...form.register("editionStock")} />
-                {volume?.edition?.unitsSold ? <FieldDescription>{volume.edition.unitsSold} sold so far.</FieldDescription> : null}
-                <FieldError errors={[errors.editionStock]} />
-              </Field>
-            </div>
-          </FieldGroup>
-        </Panel>
       </div>
 
       <div className="flex flex-col gap-4">

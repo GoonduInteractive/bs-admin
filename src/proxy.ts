@@ -25,6 +25,9 @@ export function proxy(request: NextRequest) {
     return signedIn ? NextResponse.redirect(new URL("/", request.url)) : NextResponse.next();
   }
 
+  // The invite email's link: whoever opens it hasn't signed in yet, or is someone else, who can still accept it.
+  if (pathname === "/accept-invite") return NextResponse.next();
+
   if (pathname === "/verify-email") {
     if (signedIn) return NextResponse.redirect(new URL("/", request.url));
     if (!pending) return NextResponse.redirect(new URL("/login", request.url));

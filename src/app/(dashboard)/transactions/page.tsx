@@ -14,7 +14,9 @@ export default async function TransactionsPage() {
   const settled = transactions.filter((t) => t.status === "successful");
   const moneyIn = settled.filter((t) => t.direction === "in").reduce((s, t) => s + t.amount, 0);
   const moneyOut = settled.filter((t) => t.direction === "out").reduce((s, t) => s + t.amount, 0);
-  const fees = settled.reduce((s, t) => s + t.fee, 0);
+  const fees = settled.reduce((s, t) => s + (t.fee ?? 0), 0);
+  // The API doesn't report processor fees; say nothing rather than "₦0 in fees".
+  const feesKnown = transactions.some((t) => t.fee !== undefined);
   const pending = transactions.filter((t) => t.status === "pending");
   const failed = transactions.filter((t) => t.status === "failed").length;
 
@@ -28,7 +30,7 @@ export default async function TransactionsPage() {
       <PageHeader title="Transactions" description="Every naira in and out: store sales, store refunds and prize payouts." />
 
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        <StatCard label="Money in" value={formatNairaCompact(moneyIn)} tone="success" footer={`${formatNaira(fees)} in processor fees`} />
+        <StatCard label="Money in" value={formatNairaCompact(moneyIn)} tone="success" footer={feesKnown ? `${formatNaira(fees)} in processor fees` : undefined} />
         <StatCard label="Money out" value={formatNairaCompact(moneyOut)} tone="danger" footer="Refunds and prize payouts" />
         <StatCard
           label="Pending"

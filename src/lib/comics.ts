@@ -22,17 +22,6 @@ export function nextChapterNumber(chapters: readonly Pick<Comic, "volumeId" | "c
   return Math.max(0, ...chapters.filter((c) => c.volumeId === volumeId).map((c) => c.chapter)) + 1;
 }
 
-/**
- * Whether a volume is complete: it has chapters and every one is published.
- * Only a complete volume can be sold in print as one book. `waiting` is the
- * first chapter that isn't out yet, to say why not.
- */
-export function volumeCompleteness(volumeId: string, chapters: readonly Comic[]) {
-  const own = chapters.filter((c) => c.volumeId === volumeId).sort((a, b) => a.chapter - b.chapter);
-  const published = own.filter((c) => c.status === "published").length;
-  return { total: own.length, published, complete: own.length > 0 && published === own.length, waiting: own.find((c) => c.status !== "published") };
-}
-
 /** A volume's cover: its own, or its first chapter's. */
 export function volumeCover(volume: ComicVolume, chapters: readonly Comic[]): string | undefined {
   return volume.cover || chapters.filter((c) => c.volumeId === volume.id).sort((a, b) => a.chapter - b.chapter)[0]?.cover;

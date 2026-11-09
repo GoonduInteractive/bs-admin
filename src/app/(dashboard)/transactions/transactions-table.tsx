@@ -167,7 +167,7 @@ function TransactionSheet({
               </Row>
               <Row label="Processor fee">{txn.fee ? formatNaira(txn.fee) : "—"}</Row>
               <Row label="Net">
-                <span className="font-medium tabular">{formatNaira(txn.amount - txn.fee)}</span>
+                <span className="font-medium tabular">{formatNaira(txn.amount - (txn.fee ?? 0))}</span>
               </Row>
               {link && (
                 <Row label="For">

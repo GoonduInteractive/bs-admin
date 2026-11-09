@@ -18,6 +18,7 @@ import {
 import { useRouter } from "next/navigation";
 import { useMemo, useState, useTransition, type ReactNode } from "react";
 import { toast } from "sonner";
+import { startNavigation } from "@/components/layout/nav-progress";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -361,7 +362,10 @@ export function DataTable<T>({
                       // Let links, buttons and menus inside the row do their own thing.
                       if ((e.target as HTMLElement).closest("a,button,[role=menuitem],input,label")) return;
                       if (onRowClick) onRowClick(row);
-                      else if (href) router.push(href);
+                      else if (href) {
+                        startNavigation();
+                        router.push(href);
+                      }
                     }}
                   >
                     {columns.map((col) => (

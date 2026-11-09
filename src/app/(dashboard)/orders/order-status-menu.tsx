@@ -14,32 +14,38 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { ORDER_STATUS } from "@/lib/labels";
-import type { OrderStatus } from "@/types";
+import { API_ORDER_STATUS_LABEL } from "@/lib/labels";
+import type { ApiOrderStatus, OrderStatus } from "@/types";
 import { setOrderStatusAction } from "./actions";
 
-/** Where an order can go next. A delivered or cancelled order is closed. */
-export const NEXT_STATUS: Record<OrderStatus, OrderStatus[]> = {
+/**
+ * Where an order can go next, by the API's name for the status. Unpaid, it can
+ * only be cancelled. A delivered, cancelled or refunded order is closed.
+ */
+export const NEXT_STATUS: Record<OrderStatus, ApiOrderStatus[]> = {
+  awaitingPayment: ["cancelled"],
   pending: ["processing", "cancelled"],
-  processing: ["inTransit", "cancelled"],
+  processing: ["in_transit", "cancelled"],
   inTransit: ["delivered"],
   delivered: [],
   cancelled: [],
+  refunded: [],
 };
 
-export function useOrderStatus(id: string, reference: string) {
+export function useOrderStatus(id: string, reference: string, current?: ApiOrderStatus) {
   const [pending, start] = useTransition();
-  const update = (status: OrderStatus) =>
+  const update = (to: ApiOrderStatus) =>
     start(async () => {
-      const res = await setOrderStatusAction(id, status);
-      if ("error" in res) toast.error(res.error);
-      else toast.success(`${reference} marked ${ORDER_STATUS[status].label.toLowerCase()}`);
+      const label = API_ORDER_STATUS_LABEL[to];
+      const res = await setOrderStatusAction(id, to);
+      if ("error" in res) toast.error(res.error, { description: current && `${API_ORDER_STATUS_LABEL[current]} to ${label}` });
+      else toast.success(`${reference} marked ${label.toLowerCase()}`);
     });
   return { pending, update };
 }
 
-export function OrderRowMenu({ id, reference, status }: { id: string; reference: string; status: OrderStatus }) {
-  const { pending, update } = useOrderStatus(id, reference);
+export function OrderRowMenu({ id, reference, status, current }: { id: string; reference: string; status: OrderStatus; current?: ApiOrderStatus }) {
+  const { pending, update } = useOrderStatus(id, reference, current);
   const next = NEXT_STATUS[status];
 
   return (
@@ -56,7 +62,7 @@ export function OrderRowMenu({ id, reference, status }: { id: string; reference:
               <DropdownMenuLabel>Mark as</DropdownMenuLabel>
               {next.map((s) => (
                 <DropdownMenuItem key={s} variant={s === "cancelled" ? "destructive" : "default"} onClick={() => update(s)}>
-                  {ORDER_STATUS[s].label}
+                  {API_ORDER_STATUS_LABEL[s]}
                 </DropdownMenuItem>
               ))}
             </DropdownMenuGroup>

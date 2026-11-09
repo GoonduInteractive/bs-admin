@@ -1,6 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { failureMessage } from "@/lib/api/client";
 import { getShippingRates, saveFreeShipping, saveStateShipping } from "@/lib/api/merch";
 import { fromLagosInput } from "@/lib/lagos-time";
 import { STATES, lgasOf } from "@/lib/shipping";
@@ -28,8 +29,12 @@ export async function saveStateShippingAction(state: string, input: StateShippin
     };
   }
 
-  const existing = (await getShippingRates()).find((s) => s.state === state);
-  await saveStateShipping({ ...existing, state, homeDelivery: v.homeDelivery, pickup: v.pickup, lgas, updatedAt: new Date().toISOString() });
+  try {
+    const existing = (await getShippingRates()).find((s) => s.state === state);
+    await saveStateShipping({ ...existing, state, homeDelivery: v.homeDelivery, pickup: v.pickup, lgas, updatedAt: new Date().toISOString() });
+  } catch (e) {
+    return { error: failureMessage(e, `Couldn't save ${state}'s prices`) };
+  }
   revalidatePath("/shipping");
   return { ok: true as const };
 }
@@ -39,13 +44,17 @@ export async function saveFreeShippingAction(input: FreeShippingInput) {
   const parsed = freeShippingSchema.safeParse(input);
   if (!parsed.success) return { error: parsed.error.issues[0]?.message ?? "Check the promotion" };
   const v = parsed.data;
-  await saveFreeShipping({
-    enabled: v.enabled,
-    minimumOrder: Number(v.minimumOrder),
-    ...(v.startsAt && { startsAt: fromLagosInput(v.startsAt) }),
-    ...(v.endsAt && { endsAt: fromLagosInput(v.endsAt) }),
-    updatedAt: new Date().toISOString(),
-  });
+  try {
+    await saveFreeShipping({
+      enabled: v.enabled,
+      minimumOrder: Number(v.minimumOrder),
+      ...(v.startsAt && { startsAt: fromLagosInput(v.startsAt) }),
+      ...(v.endsAt && { endsAt: fromLagosInput(v.endsAt) }),
+      updatedAt: new Date().toISOString(),
+    });
+  } catch (e) {
+    return { error: failureMessage(e, "Couldn't save the promotion") };
+  }
   revalidatePath("/shipping");
   return { ok: true as const };
 }

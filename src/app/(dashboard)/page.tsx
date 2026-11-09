@@ -1,5 +1,4 @@
 import { ArrowUpRight, ShoppingBag, Trophy, Users, Wallet } from "lucide-react";
-import Image from "next/image";
 import Link from "next/link";
 import { RankedBars } from "@/components/charts/ranked-bars";
 import { RevenueChart } from "@/components/charts/revenue-chart";
@@ -8,20 +7,11 @@ import { PageHeader } from "@/components/shared/page-header";
 import { Panel } from "@/components/shared/panel";
 import { StatCard } from "@/components/shared/stat-card";
 import { StatusBadge } from "@/components/shared/status-badge";
+import { Thumb } from "@/components/shared/thumb";
 import { getCurrentAdmin } from "@/lib/api/auth";
-import { getRegions, getTournaments } from "@/lib/api/competition";
-import { regionName, regionNames } from "@/lib/regions";
-import {
-  getPlayersByRegion,
-  getRevenueByStream,
-  getRevenueSeries,
-  getSummary,
-  getUnitsByItem,
-  parseRange,
-} from "@/lib/api/dashboard";
-import { getOrders } from "@/lib/api/orders";
+import { getDashboard, parseRange } from "@/lib/api/dashboard";
 import { formatCount, formatDate, formatNaira, formatNairaCompact } from "@/lib/format";
-import { ORDER_STATUS, TOURNAMENT_STATUS } from "@/lib/labels";
+import { TOURNAMENT_STATUS, orderBadge } from "@/lib/labels";
 import { slotsFill, slotsLabel } from "@/lib/tournaments";
 import { RangeTabs } from "./range-tabs";
 
@@ -32,22 +22,10 @@ function greeting() {
 
 export default async function DashboardPage({ searchParams }: PageProps<"/">) {
   const range = parseRange((await searchParams).range);
-  const [admin, summary, series, streams, units, regions, orders, tournaments, regionList] = await Promise.all([
-    getCurrentAdmin(),
-    getSummary(range),
-    getRevenueSeries(range),
-    getRevenueByStream(range),
-    getUnitsByItem(range),
-    getPlayersByRegion(),
-    getOrders(),
-    getTournaments(),
-    getRegions(),
-  ]);
+  const [admin, dashboard] = await Promise.all([getCurrentAdmin(), getDashboard(range)]);
+  const { summary, series, streams, units, playersByRegion: regions, recentOrders: recent, tournaments: live } = dashboard;
 
   const period = `vs previous ${range} days`;
-  const names = regionNames(regionList);
-  const live = tournaments.filter((t) => t.status === "active" || t.status === "registrationOpen");
-  const recent = orders.slice(0, 6);
   const total = series.reduce((s, p) => s + p.value, 0);
 
   return (
@@ -59,14 +37,14 @@ export default async function DashboardPage({ searchParams }: PageProps<"/">) {
       />
 
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        <StatCard label="Revenue" value={formatNairaCompact(summary.revenue.value)} change={summary.revenue.change} changeLabel={period} icon={Wallet} />
-        <StatCard label="Orders" value={formatCount(summary.orders.value)} change={summary.orders.change} changeLabel={period} icon={ShoppingBag} />
-        <StatCard label="Registered players" value={formatCount(summary.players.value)} change={summary.players.change} changeLabel={`joined in the last ${range} days`} icon={Users} />
+        <StatCard label="Revenue" value={formatNairaCompact(summary.revenue.value)} change={summary.revenue.change ?? undefined} changeLabel={period} icon={Wallet} />
+        <StatCard label="Orders" value={formatCount(summary.orders.value)} change={summary.orders.change ?? undefined} changeLabel={period} icon={ShoppingBag} />
+        <StatCard label="Registered players" value={formatCount(summary.players.value)} change={summary.players.change ?? undefined} changeLabel={`joined in the last ${range} days`} icon={Users} />
         <StatCard
           label="Live tournaments"
           value={summary.activeTournaments.value}
           icon={Trophy}
-          footer={`${tournaments.filter((t) => t.status === "registrationOpen").length} taking registrations`}
+          footer={`${dashboard.registrationsOpen} taking registrations`}
         />
       </div>
 
@@ -103,22 +81,25 @@ export default async function DashboardPage({ searchParams }: PageProps<"/">) {
         >
           <ul className="divide-y">
             {recent.map((o) => {
-              const s = ORDER_STATUS[o.status];
-              const first = o.lines[0];
+              const s = orderBadge(o);
               return (
                 <li key={o.id}>
                   <Link href={`/orders/${o.id}`} className="flex items-center gap-3 rounded-lg px-3 py-3 hover:bg-paper">
-                    <span className="relative size-11 shrink-0 overflow-hidden rounded-lg bg-linen">
-                      <Image src={first.image} alt="" fill sizes="44px" className="object-contain p-1" />
+                    <span className="relative grid size-11 shrink-0 place-items-center overflow-hidden rounded-lg bg-linen">
+                      {o.image ? (
+                        <Thumb src={o.image} alt="" fill sizes="44px" className="object-contain p-1" />
+                      ) : (
+                        <ShoppingBag className="size-5 text-muted-foreground" aria-hidden />
+                      )}
                     </span>
                     <span className="min-w-0 flex-1">
                       <span className="block truncate text-sm font-medium">
-                        {o.customer.name}
+                        {o.customer}
                         <span className="ml-2 font-normal text-muted-foreground">{o.reference}</span>
                       </span>
                       <span className="block truncate text-xs text-muted-foreground">
-                        {first.name}
-                        {o.lines.length > 1 && ` + ${o.lines.length - 1} more`} · {formatDate(o.placedAt)}
+                        {o.summary && `${o.summary} · `}
+                        {formatDate(o.placedAt)}
                       </span>
                     </span>
                     <span className="hidden sm:block">
@@ -147,13 +128,13 @@ export default async function DashboardPage({ searchParams }: PageProps<"/">) {
               const fill = slotsFill(t);
               return (
                 <li key={t.id}>
-                  <Link href={`/tournaments/${t.slug}`} className="block rounded-lg border p-3.5 hover:bg-paper">
+                  <Link href={t.slug ? `/tournaments/${t.slug}` : "/tournaments"} className="block rounded-lg border p-3.5 hover:bg-paper">
                     <div className="flex items-start justify-between gap-2">
                       <p className="text-sm font-medium">{t.name}</p>
                       <StatusBadge label={s.label} tone={s.tone} />
                     </div>
                     <p className="mt-1 text-xs text-muted-foreground">
-                      {regionName(t.region, names)} · {formatNairaCompact(t.prizePool)} prize pool
+                      {t.region} · {formatNairaCompact(t.prizePool)} prize pool
                     </p>
                     <div className="mt-3 flex items-center gap-3">
                       {fill === null ? (

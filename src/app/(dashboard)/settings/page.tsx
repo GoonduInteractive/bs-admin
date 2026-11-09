@@ -3,8 +3,11 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { PageHeader } from "@/components/shared/page-header";
 import { getCurrentAdmin } from "@/lib/api/auth";
+import { failureMessage } from "@/lib/api/client";
+import { getNotificationSettings, getStoreSettings, getTeam } from "@/lib/api/settings";
 import { cn } from "@/lib/utils";
-import { NotificationsForm, ProfileForm, StoreForm, TeamPanel } from "./settings-forms";
+import type { AdminUser, TeamMember } from "@/types";
+import { NotificationsForm, ProfilePanel, StoreForm, TeamPanel } from "./settings-forms";
 
 export const metadata: Metadata = { title: "Settings" };
 
@@ -16,17 +19,26 @@ const TABS = [
 ] as const;
 type Tab = (typeof TABS)[number]["id"];
 
-/** MOCK teammates until the team endpoint exists. */
-const TEAM = [
-  { id: "adm_0002", name: "Chinedu Okeke", email: "chinedu@goondu.games", role: "owner" as const, lastSeen: "2026-09-23T18:20:00+01:00" },
-  { id: "adm_0003", name: "Ifeoma Nwachukwu", email: "ifeoma@goondu.games", role: "support" as const, lastSeen: "2026-09-24T09:05:00+01:00" },
-];
-
 export default async function SettingsPage({ searchParams }: PageProps<"/settings">) {
   const admin = await getCurrentAdmin();
   if (!admin) redirect("/login");
   const { tab: raw } = await searchParams;
   const tab: Tab = TABS.some((t) => t.id === raw) ? (raw as Tab) : "profile";
+
+  // Only what the open tab shows. The profile has no role, so the team says what the signed-in
+  // admin's is; if the team can't be read, the Team tab says why and the profile keeps the session's.
+  let team: TeamMember[] | null = null;
+  let teamError: string | null = null;
+  if (tab === "profile" || tab === "team") {
+    try {
+      team = await getTeam();
+    } catch (e) {
+      teamError = failureMessage(e, "Couldn't load the team.");
+    }
+  }
+  const me: AdminUser = { ...admin, role: team?.find((m) => m.email.toLowerCase() === admin.email.toLowerCase())?.role ?? admin.role };
+  const store = tab === "store" ? await getStoreSettings() : null;
+  const notifications = tab === "notifications" ? await getNotificationSettings() : null;
 
   return (
     <>
@@ -51,10 +63,10 @@ export default async function SettingsPage({ searchParams }: PageProps<"/setting
         </nav>
 
         <div className="min-w-0">
-          {tab === "profile" && <ProfileForm admin={admin} />}
-          {tab === "team" && <TeamPanel admin={admin} members={TEAM} />}
-          {tab === "store" && <StoreForm />}
-          {tab === "notifications" && <NotificationsForm />}
+          {tab === "profile" && <ProfilePanel admin={me} />}
+          {tab === "team" && <TeamPanel admin={me} members={team} error={teamError} />}
+          {store && <StoreForm settings={store} />}
+          {notifications && <NotificationsForm settings={notifications} />}
         </div>
       </div>
     </>

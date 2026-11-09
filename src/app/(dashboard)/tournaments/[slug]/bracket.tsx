@@ -96,11 +96,21 @@ function MatchCard({ match, slug, isFinal }: { match: Match; slug: string; isFin
  * The bracket, one column per round. Each column spreads its matches across
  * the full height so a match sits level with the two it was fed from.
  */
-export function Bracket({ rounds, slug }: { rounds: BracketRound[]; slug: string }) {
+export function Bracket({ rounds, slug, projected = [] }: { rounds: BracketRound[]; slug: string; projected?: { label: string; matches: number }[] }) {
   if (rounds.length === 0) {
+    // The API says what the field will play once drawn.
+    const ahead = projected.map((p) => `${p.label} (${p.matches} ${p.matches === 1 ? "match" : "matches"})`).join(" · ");
     return (
       <div className="rounded-xl bg-card ring-1 ring-foreground/8">
-        <EmptyState icon={Swords} title="No bracket yet" description="The bracket is drawn when registration closes and seeding is done." />
+        <EmptyState
+          icon={Swords}
+          title="No bracket yet"
+          description={
+            ahead
+              ? `The bracket is drawn when registration closes and seeding is done. With today's field it plays: ${ahead}.`
+              : "The bracket is drawn when registration closes and seeding is done."
+          }
+        />
       </div>
     );
   }

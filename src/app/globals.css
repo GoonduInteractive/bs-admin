@@ -50,6 +50,14 @@
   --color-flare: #e14040;   /* failed, cancelled */
   --color-sky: #2a78d6;     /* in transit, informational */
   --color-gold: #d99313;    /* champion crown: the site's podium gold-deep */
+
+  /* ---- The page-change bar (`NavProgress`): quick to a third, then slowing towards the end it never reaches ---- */
+  --animate-nav-progress: nav-progress 12s cubic-bezier(0.1, 0.8, 0.2, 1) forwards;
+  @keyframes nav-progress {
+    from { width: 0%; }
+    8% { width: 35%; }
+    to { width: 92%; }
+  }
 }
 
 /* Tokens that flip with the theme. Values are set on :root and .dark below. */

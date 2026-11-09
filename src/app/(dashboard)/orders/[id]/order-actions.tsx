@@ -3,18 +3,18 @@
 import { Loader2 } from "lucide-react";
 import { ConfirmDialog } from "@/components/shared/confirm-dialog";
 import { Button } from "@/components/ui/button";
-import { ORDER_STATUS } from "@/lib/labels";
-import type { OrderStatus } from "@/types";
+import { API_ORDER_STATUS_LABEL } from "@/lib/labels";
+import type { ApiOrderStatus, OrderStatus } from "@/types";
 import { NEXT_STATUS, useOrderStatus } from "../order-status-menu";
 
-const VERB: Partial<Record<OrderStatus, string>> = {
+const VERB: Partial<Record<ApiOrderStatus, string>> = {
   processing: "Start processing",
-  inTransit: "Mark as shipped",
+  in_transit: "Mark as shipped",
   delivered: "Mark as delivered",
 };
 
-export function OrderActions({ id, reference, status }: { id: string; reference: string; status: OrderStatus }) {
-  const { pending, update } = useOrderStatus(id, reference);
+export function OrderActions({ id, reference, status, current }: { id: string; reference: string; status: OrderStatus; current?: ApiOrderStatus }) {
+  const { pending, update } = useOrderStatus(id, reference, current);
   const next = NEXT_STATUS[status];
   const forward = next.find((s) => s !== "cancelled");
 
@@ -38,7 +38,7 @@ export function OrderActions({ id, reference, status }: { id: string; reference:
       {forward && (
         <Button size="xl" disabled={pending} onClick={() => update(forward)}>
           {pending && <Loader2 className="animate-spin" />}
-          {VERB[forward] ?? `Mark ${ORDER_STATUS[forward].label.toLowerCase()}`}
+          {VERB[forward] ?? `Mark ${API_ORDER_STATUS_LABEL[forward].toLowerCase()}`}
         </Button>
       )}
     </>

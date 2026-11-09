@@ -7,9 +7,9 @@ import { StatCard } from "@/components/shared/stat-card";
 import { StatusBadge } from "@/components/shared/status-badge";
 import { Thumb } from "@/components/shared/thumb";
 import { Button } from "@/components/ui/button";
-import { getComics, getProducts, getVolumes } from "@/lib/api/merch";
-import { formatsOnSale, priceLabel, unitsSold, volumeCover } from "@/lib/comics";
-import { formatCount, formatDate, formatNaira } from "@/lib/format";
+import { getComicStats, getComics, getProducts, getVolumes } from "@/lib/api/merch";
+import { formatsOnSale, priceLabel, volumeCover } from "@/lib/comics";
+import { formatCount, formatDate } from "@/lib/format";
 import { COMIC_FORMAT, COMIC_STATUS, PRODUCT_STATUS } from "@/lib/labels";
 import type { Comic, ComicProduct, ComicVolume } from "@/types";
 
@@ -20,16 +20,11 @@ export const metadata: Metadata = { title: "Comics" };
  * order. A chapter is one comic book - read online, sold online or in print.
  */
 export default async function ComicsPage() {
-  const [comics, volumes, products] = await Promise.all([getComics(), getVolumes(), getProducts()]);
+  const [comics, volumes, products, stats] = await Promise.all([getComics(), getVolumes(), getProducts(), getComicStats()]);
   // How each chapter is sold is its `comics` product in Products, if it has one.
   const productFor = new Map(
     products.filter((p): p is ComicProduct => p.type === "comics").map((p) => [p.comicId, p]),
   );
-  const sold = (id: string) => {
-    const p = productFor.get(id);
-    return p ? unitsSold(p) : 0;
-  };
-  const published = comics.filter((c) => c.status === "published");
 
   return (
     <>
@@ -53,14 +48,10 @@ export default async function ComicsPage() {
       />
 
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        <StatCard label="Volumes" value={formatCount(volumes.length)} footer={`${formatCount(comics.length)} chapters across them`} />
-        <StatCard label="Published chapters" value={formatCount(published.length)} footer={`${comics.length - published.length} scheduled or in draft`} />
-        <StatCard label="Reads" value={formatCount(comics.reduce((s, c) => s + c.reads, 0))} footer="Online reader, all chapters" />
-        <StatCard
-          label="Copies sold"
-          value={formatCount(comics.reduce((s, c) => s + sold(c.id), 0))}
-          footer={`${productFor.size} of ${comics.length} chapters in the store`}
-        />
+        <StatCard label="Volumes" value={formatCount(stats.volumes)} footer={`${formatCount(stats.chapters)} chapters across them`} />
+        <StatCard label="Published chapters" value={formatCount(stats.published)} footer={`${formatCount(stats.unpublished)} scheduled or in draft`} />
+        <StatCard label="Reads" value={formatCount(stats.reads)} footer="Online reader, all chapters" />
+        <StatCard label="Copies sold" value={formatCount(stats.copiesSold)} footer={`${stats.inStore} of ${stats.chapters} chapters in the store`} />
       </div>
 
       {volumes.length === 0 ? (
@@ -84,7 +75,6 @@ export default async function ComicsPage() {
             cover={volumeCover(v, comics)}
             chapters={comics.filter((c) => c.volumeId === v.id)}
             productFor={productFor}
-            sold={sold}
           />
         ))
       )}
@@ -98,13 +88,11 @@ function VolumeSection({
   cover,
   chapters,
   productFor,
-  sold,
 }: {
   volume: ComicVolume;
   cover?: string;
   chapters: Comic[];
   productFor: Map<string, ComicProduct>;
-  sold: (id: string) => number;
 }) {
   const live = chapters.filter((c) => c.status === "published").length;
   return (
@@ -122,16 +110,6 @@ function VolumeSection({
             {chapters.length} chapter{chapters.length === 1 ? "" : "s"} · {live} published ·{" "}
             {formatCount(chapters.reduce((s, c) => s + c.pages.length, 0))} pages
           </p>
-          {/* The printed volume: on sale, paused when the volume stopped being complete, or ready to switch on. */}
-          {volume.edition?.enabled ? (
-            <p className="mt-1 text-xs font-medium text-moss">
-              Printed volume on sale · {formatNaira(volume.edition.price)} · {formatCount(volume.edition.stock)} in stock
-            </p>
-          ) : volume.edition?.pausedReason ? (
-            <p className="mt-1 text-xs font-medium text-flare">Printed volume paused: {volume.edition.pausedReason}</p>
-          ) : chapters.length > 0 && chapters.every((c) => c.status === "published") ? (
-            <p className="mt-1 text-xs text-muted-foreground">Every chapter is out: it can be sold in print</p>
-          ) : null}
         </div>
         <div className="flex gap-2">
           <Button variant="outline" className="bg-card" render={<Link href={`/comics/volumes/${volume.id}`} />}>
@@ -155,7 +133,7 @@ function VolumeSection({
       ) : (
         <ol className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4">
           {chapters.map((c) => (
-            <ChapterCard key={c.id} c={c} product={productFor.get(c.id)} sold={sold(c.id)} />
+            <ChapterCard key={c.id} c={c} product={productFor.get(c.id)} />
           ))}
         </ol>
       )}
@@ -163,7 +141,8 @@ function VolumeSection({
   );
 }
 
-function ChapterCard({ c, product, sold }: { c: Comic; product?: ComicProduct; sold: number }) {
+/** Reads and copies sold are dashes: the API gives them as totals, on the page's stat cards, not per chapter. */
+function ChapterCard({ c, product }: { c: Comic; product?: ComicProduct }) {
   const s = COMIC_STATUS[c.status];
   return (
     <li className="group flex flex-col overflow-hidden rounded-xl bg-card ring-1 ring-foreground/8">
@@ -191,11 +170,11 @@ function ChapterCard({ c, product, sold }: { c: Comic; product?: ComicProduct; s
           </div>
           <div className="rounded-lg bg-paper px-2 py-2">
             <dt className="text-muted-foreground">Reads</dt>
-            <dd className="mt-0.5 text-sm font-semibold">{formatCount(c.reads)}</dd>
+            <dd className="mt-0.5 text-sm font-semibold">—</dd>
           </div>
           <div className="rounded-lg bg-paper px-2 py-2">
             <dt className="text-muted-foreground">Sold</dt>
-            <dd className="mt-0.5 text-sm font-semibold">{formatCount(sold)}</dd>
+            <dd className="mt-0.5 text-sm font-semibold">—</dd>
           </div>
         </dl>
         <StoreLine chapter={c} product={product} />
@@ -204,7 +183,7 @@ function ChapterCard({ c, product, sold }: { c: Comic; product?: ComicProduct; s
             ? `Releases ${formatDate(c.publishAt)}`
             : c.publishAt
               ? `Released ${formatDate(c.publishAt)}`
-              : `Edited ${formatDate(c.updatedAt)}`}
+              : c.updatedAt && `Edited ${formatDate(c.updatedAt)}`}
         </p>
         <div className="mt-auto grid grid-cols-2 gap-2">
           <Button variant="outline" render={<Link href={`/comics/${c.id}/read`} />} disabled={c.pages.length === 0}>

@@ -3,7 +3,7 @@
 import { zodResolver } from "@hookform/resolvers/zod";
 import { Loader2, Search, Truck } from "lucide-react";
 import { useState, useTransition } from "react";
-import { useForm, useWatch } from "react-hook-form";
+import { useForm, useWatch, type DefaultValues } from "react-hook-form";
 import { toast } from "sonner";
 import { DataTable, type Column } from "@/components/shared/data-table";
 import { Button } from "@/components/ui/button";
@@ -15,13 +15,23 @@ import { stateShippingSchema, type StateShippingInput } from "@/lib/schemas";
 import type { StateShipping } from "@/types";
 import { saveStateShippingAction } from "./actions";
 
-/** A state's prices, with its local governments listed for the editor. */
-export type StateRow = StateShipping & { lgaList: { id: string; name: string }[]; overrides: number };
+/**
+ * A state's prices, with its local governments listed for the editor. Every
+ * state has a row; one the backend has no prices for yet has `null` prices
+ * and no `updatedAt`, and saving it creates them.
+ */
+export type StateRow = Omit<StateShipping, "homeDelivery" | "pickup" | "updatedAt"> & {
+  homeDelivery: number | null;
+  pickup: number | null;
+  updatedAt: string | null;
+  lgaList: { id: string; name: string }[];
+  overrides: number;
+};
 
-function toInput(row: StateRow): StateShippingInput {
+function toInput(row: StateRow): DefaultValues<StateShippingInput> {
   return {
-    homeDelivery: row.homeDelivery,
-    pickup: row.pickup,
+    homeDelivery: row.homeDelivery ?? undefined,
+    pickup: row.pickup ?? undefined,
     lgas: Object.fromEntries(
       row.lgaList.map((l) => [l.id, { homeDelivery: String(row.lgas[l.id]?.homeDelivery ?? ""), pickup: String(row.lgas[l.id]?.pickup ?? "") }]),
     ),
@@ -153,15 +163,20 @@ export function ShippingTable({ rows }: { rows: StateRow[] }) {
   const [editing, setEditing] = useState<string | null>(null);
   const open = rows.find((r) => r.state === editing) ?? null;
 
+  const price = (n: number | null) =>
+    n === null ? <span className="text-muted-foreground">Not priced</span> : <span className="tabular">{formatNaira(n)}</span>;
+
   const columns: Column<StateRow>[] = [
     { id: "state", header: "State", cell: (r) => <span className="font-medium">{r.state}</span>, sortValue: (r) => r.state, csv: (r) => r.state },
-    { id: "home", header: "Home Delivery", cell: (r) => <span className="tabular">{formatNaira(r.homeDelivery)}</span>, sortValue: (r) => r.homeDelivery, csv: (r) => r.homeDelivery },
-    { id: "pickup", header: "Pickup", cell: (r) => <span className="tabular">{formatNaira(r.pickup)}</span>, sortValue: (r) => r.pickup, csv: (r) => r.pickup },
+    { id: "home", header: "Home Delivery", cell: (r) => price(r.homeDelivery), sortValue: (r) => r.homeDelivery ?? -1, csv: (r) => r.homeDelivery ?? "" },
+    { id: "pickup", header: "Pickup", cell: (r) => price(r.pickup), sortValue: (r) => r.pickup ?? -1, csv: (r) => r.pickup ?? "" },
     {
       id: "local",
       header: "Local prices",
       cell: (r) =>
-        r.overrides ? (
+        r.homeDelivery === null ? (
+          <span className="text-muted-foreground">—</span>
+        ) : r.overrides ? (
           <span>
             {r.overrides} of {r.lgaList.length}
           </span>
@@ -171,14 +186,19 @@ export function ShippingTable({ rows }: { rows: StateRow[] }) {
       sortValue: (r) => r.overrides,
       csv: (r) => r.overrides,
     },
-    { id: "updated", header: "Updated", cell: (r) => <span className="text-muted-foreground">{formatDate(r.updatedAt)}</span>, sortValue: (r) => r.updatedAt },
+    {
+      id: "updated",
+      header: "Updated",
+      cell: (r) => <span className="text-muted-foreground">{r.updatedAt ? formatDate(r.updatedAt) : "—"}</span>,
+      sortValue: (r) => r.updatedAt ?? "",
+    },
     {
       id: "edit",
       header: <span className="sr-only">Edit</span>,
       cell: (r) => (
         <div className="flex justify-end">
           <Button variant="outline" size="sm" className="bg-card" onClick={() => setEditing(r.state)}>
-            Edit prices
+            {r.homeDelivery === null ? "Set prices" : "Edit prices"}
           </Button>
         </div>
       ),

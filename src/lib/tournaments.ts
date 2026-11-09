@@ -1,4 +1,4 @@
-import type { BracketRound, Match, MatchSide, RoundKey, Stage, StageKey, Tournament } from "@/types";
+import type { BracketRound, RoundKey, Stage, StageKey, Tournament } from "@/types";
 
 /**
  * Tournament settings an admin types in. Slots are a number, or unlimited;
@@ -95,82 +95,6 @@ export function stagePosition(stages: readonly Stage[]) {
   const current = at === -1 ? undefined : stages[at];
   const next = stages.slice(at + 1).find((s) => s.status === "upcoming");
   return { current, next };
-}
-
-const BYE: MatchSide = { handle: "Bye", bye: true };
-
-/**
- * Standard bracket order: seed 1 meets the lowest seed, and 1 and 2 can only
- * meet in the final. For 8: 1, 8, 4, 5, 2, 7, 3, 6 - read in pairs.
- */
-function seedOrder(size: number): number[] {
-  let order = [1, 2];
-  while (order.length < size) order = order.flatMap((s) => [s, order.length * 2 + 1 - s]);
-  return order;
-}
-
-/**
- * Draw the bracket: `seeded` in seed order (best first) into a bracket of
- * `size`. Empty seats are byes, so the top seeds are the ones who get them.
- * Later rounds are drawn empty and fill as results come in.
- */
-export function drawBracket(seeded: readonly { handle: string }[], size: number, startsAt: string, idPrefix: string): BracketRound[] {
-  const order = seedOrder(size);
-  const seat = (seed: number): MatchSide => (seeded[seed - 1] ? { handle: seeded[seed - 1].handle } : BYE);
-  const first = firstRound(size);
-  return ROUNDS.slice(ROUNDS.indexOf(first)).map((key, r) => ({
-    key,
-    matches: Array.from({ length: ROUND_SIZE[key] / 2 }, (_, m) => ({
-      id: `${idPrefix}-${key}-${m + 1}`,
-      sides: (r === 0 ? [seat(order[m * 2]), seat(order[m * 2 + 1])] : [null, null]) as Match["sides"],
-      scheduledAt: r === 0 ? startsAt : undefined,
-    })),
-  }));
-}
-
-/** Put a winner into the seat they earned next round: match m feeds match floor(m/2), side m % 2. */
-export function sendForward(bracket: BracketRound[], r: number, m: number, side: MatchSide) {
-  const next = bracket[r + 1];
-  if (next) next.matches[Math.floor(m / 2)].sides[m % 2] = side.bye ? BYE : { handle: side.handle };
-}
-
-/**
- * Settle every match with a bye in it: the real player wins automatically and
- * moves on. Two byes send a bye forward. Runs until nothing changes, so a bye
- * that reaches a later round is settled too.
- */
-export function resolveByes(bracket: BracketRound[], now = new Date().toISOString()) {
-  for (let changed = true; changed; ) {
-    changed = false;
-    bracket.forEach((round, r) =>
-      round.matches.forEach((match, m) => {
-        const [a, b] = match.sides;
-        if (match.winner !== undefined || !a || !b || !(a.bye || b.bye)) return;
-        match.winner = a.bye && !b.bye ? 1 : 0;
-        match.walkover = true;
-        match.playedAt = now;
-        match.endsAt = undefined;
-        sendForward(bracket, r, m, match.sides[match.winner]!);
-        changed = true;
-      }),
-    );
-  }
-}
-
-/**
- * A player leaves the bracket - disqualified or suspended. Their seat in the
- * match they haven't played becomes a bye, so their opponent (now, or when one
- * arrives) advances automatically.
- */
-export function forfeit(bracket: BracketRound[], handle: string) {
-  for (const round of bracket) {
-    for (const match of round.matches) {
-      if (match.winner !== undefined) continue;
-      const i = match.sides.findIndex((s) => s?.handle === handle && !s.bye);
-      if (i !== -1) match.sides[i] = BYE;
-    }
-  }
-  resolveByes(bracket);
 }
 
 /** The qualifier leaderboard: most points first; a tie goes to whoever registered earlier. */

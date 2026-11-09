@@ -1,6 +1,8 @@
 import { z } from "zod";
 import { SPLIT_TOLERANCE, splitTotal } from "@/lib/tournaments";
 import { CUSTOM_COLOUR_ID, MAX_CUSTOM_COLOURS, STANDARD_COLOURS, STANDARD_COLOUR_IDS, colourNameTaken } from "@/lib/colours";
+import { COVER_BAND } from "@/lib/labels";
+import type { CoverBand } from "@/types";
 
 /**
  * Form and action schemas. The same schema validates in the browser (through
@@ -20,6 +22,38 @@ export const verifySchema = z.object({
   code: z.string().regex(/^\d{6}$/, "Enter the 6-digit code"),
 });
 export type VerifyInput = z.infer<typeof verifySchema>;
+
+/** Accepting an invite: the password they'll sign in with. 8+ characters, as sign-in asks. */
+export const acceptInviteSchema = z
+  .object({
+    password: z.string().min(8, "Password must be at least 8 characters"),
+    confirm: z.string(),
+  })
+  .refine((v) => v.password === v.confirm, { path: ["confirm"], message: "The passwords don't match" });
+export type AcceptInviteInput = z.infer<typeof acceptInviteSchema>;
+
+/* ---- Settings ---------------------------------------------------------- */
+
+/** Owners aren't invited: someone is made one from the team list. */
+export const inviteSchema = z.object({
+  firstName: z.string().trim().min(1, "Enter their first name"),
+  lastName: z.string().trim().min(1, "Enter their last name"),
+  email: z.email("Enter a valid email"),
+  role: z.enum(["admin", "support"]),
+});
+export type InviteInput = z.infer<typeof inviteSchema>;
+
+export const storeSettingsSchema = z.object({
+  lowStockAt: z.coerce.number<number>().int("Use a whole number").min(1, "At least 1"),
+});
+export type StoreSettingsInput = z.infer<typeof storeSettingsSchema>;
+
+export const notificationSettingsSchema = z.object({
+  orders: z.boolean(),
+  stock: z.boolean(),
+  registrations: z.boolean(),
+  results: z.boolean(),
+});
 
 /* ---- Products ---------------------------------------------------------- */
 
@@ -170,16 +204,7 @@ export const volumeSchema = z.object({
   /** Optional: blank, the first chapter's cover stands in. */
   cover: z.string(),
   /** The printed volume. On sale only once every chapter is published (checked on save). */
-  editionEnabled: z.boolean(),
   /** Typed text, so a cleared box is an error rather than ₦0. */
-  editionPrice: z.string().trim(),
-  editionStock: z.coerce.number<number>().int("Whole copies only").min(0, "Stock can't be negative"),
-}).superRefine((v, ctx) => {
-  if (!v.editionEnabled) return;
-  const path = ["editionPrice"];
-  if (!v.editionPrice) ctx.addIssue({ code: "custom", path, message: "Set the printed volume's price" });
-  else if (!/^\d+$/.test(v.editionPrice)) ctx.addIssue({ code: "custom", path, message: "Whole naira only" });
-  else if (Number(v.editionPrice) < 500) ctx.addIssue({ code: "custom", path, message: "Minimum print price is ₦500" });
 });
 export type VolumeInput = z.infer<typeof volumeSchema>;
 
@@ -193,6 +218,10 @@ export const comicSchema = z
     status: z.enum(["published", "scheduled", "draft"]),
     publishAt: z.string().optional(),
     cover: z.string().min(1, "Upload a cover"),
+    coverStyle: z.enum(["torn", "full"]),
+    coverTitle: z.string().trim().max(80),
+    coverVolume: z.string().trim().max(20, "Keep the volume tag short, like VOL. 1"),
+    coverBand: z.enum(Object.keys(COVER_BAND) as [CoverBand, ...CoverBand[]]),
     pages: z.array(z.object({ id: z.string(), src: z.string() })).min(1, "Upload at least one page"),
   })
   .refine((v) => v.status !== "scheduled" || !!v.publishAt, {
@@ -278,7 +307,10 @@ export const tournamentSchema = z
             .number<number>()
             .gt(0, "Every paid position needs a share")
             .max(100, "No position can take more than 100%")
-            .refine((n) => Math.round(n * 100) === n * 100, "Two decimal places at most"),
+            // The API takes two decimals (since 2026-10-27; it refused them before). Compared with
+            // a hair of tolerance: 33.34 * 100 is 3334.0000000000005 in floating point, and an
+            // exact test refused Split evenly's own 1st place.
+            .refine((n) => Math.abs(n * 100 - Math.round(n * 100)) < 1e-6, "Two decimal places at most"),
         }),
       )
       .min(1, "Pay at least one position"),

@@ -1,19 +1,17 @@
 import "server-only";
-import type { DashboardSummary, RegionId, ShareSlice, TimeSeriesPoint, Transaction } from "@/types";
-import { REGIONS } from "@/lib/mock/regions";
-import { regionName, regionNames } from "@/lib/regions";
-import { ORDERS } from "@/lib/mock/orders";
-import { PLAYERS } from "@/lib/mock/players";
-import { DAY, MOCK_NOW } from "@/lib/mock/random";
-import { TOURNAMENTS } from "@/lib/mock/tournaments";
-import { TRANSACTIONS } from "@/lib/mock/transactions";
-import { mockDelay } from "./client";
+import { z } from "zod";
+import type { Dashboard, TournamentStatus } from "@/types";
+import { regionNames } from "@/lib/regions";
+import { apiFetch, fromMinor } from "./client";
+import { getRegions } from "./competition";
+import { API_ORDER_STATUS } from "./orders";
 
 /**
- * Dashboard aggregates, all scoped to one range so every figure on the page
- * describes the same window. MOCK: computed from the fixtures, so the overview
- * agrees with the list pages. A real backend would serve these pre-aggregated
- * (`GET /dashboard/summary?range=30`); the return types are the contract.
+ * The dashboard, all scoped to one range so every figure on the page describes
+ * the same window.
+ *
+ * `GET /v1/admin/dashboard?range=7d|30d|90d` serves it pre-aggregated in one
+ * call.
  */
 
 export const RANGES = [7, 30, 90] as const;
@@ -24,88 +22,97 @@ export function parseRange(value: unknown): RangeDays {
   return (RANGES as readonly number[]).includes(n) ? (n as RangeDays) : 30;
 }
 
-const isRevenue = (t: Transaction) => t.direction === "in" && t.status === "successful";
+/** "Oct 28", or a dash for a date that can't be read. */
+const dayLabel = (date: Date | string) =>
+  Number.isNaN(new Date(date).getTime())
+    ? "—"
+    : new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric", timeZone: "Africa/Lagos" }).format(new Date(date));
 
-function inWindow(iso: string, fromDaysAgo: number, toDaysAgo = 0) {
-  const t = new Date(iso).getTime();
-  return t > MOCK_NOW - fromDaysAgo * DAY && t <= MOCK_NOW - toDaysAgo * DAY;
-}
+const API_TOURNAMENT_STATUS = {
+  draft: "draft",
+  coming_soon: "comingSoon",
+  registration_open: "registrationOpen",
+  active: "active",
+  completed: "completed",
+  cancelled: "cancelled",
+} as const satisfies Record<string, TournamentStatus>;
 
-function change(current: number, previous: number) {
-  if (previous === 0) return current > 0 ? 100 : 0;
-  return ((current - previous) / previous) * 100;
-}
+const STREAM_LABEL: Record<string, string> = { tournaments: "Tournaments", comics: "Comics", merch: "Merch", other: "Other" };
 
-const sumRevenue = (from: number, to = 0) =>
-  TRANSACTIONS.filter((t) => isRevenue(t) && inWindow(t.createdAt, from, to)).reduce((s, t) => s + t.amount, 0);
+const card = z.object({ total: z.number().optional(), total_minor: z.number().optional(), change_pct: z.number().nullish() });
 
-/** Headline figures for the range, each against the range before it. */
-export async function getSummary(range: RangeDays): Promise<DashboardSummary> {
-  await mockDelay();
-  const revenueNow = sumRevenue(range);
-  const revenuePrev = sumRevenue(range * 2, range);
-  const ordersNow = ORDERS.filter((o) => inWindow(o.placedAt, range)).length;
-  const ordersPrev = ORDERS.filter((o) => inWindow(o.placedAt, range * 2, range)).length;
-  const joinedBefore = PLAYERS.filter((p) => new Date(p.joinedAt).getTime() <= MOCK_NOW - range * DAY).length;
-  const active = TOURNAMENTS.filter((t) => t.status === "active" || t.status === "registrationOpen").length;
+const apiDashboard = z.object({
+  cards: z.object({
+    revenue: card,
+    orders: card,
+    players: card.extend({ new_in_range: z.number().optional() }),
+    live_tournaments: z.object({ active: z.number(), taking_registrations: z.number() }),
+  }),
+  revenue_series: z.array(z.object({ date: z.string(), total_minor: z.number() })),
+  revenue_by_stream: z.object({ streams: z.array(z.object({ key: z.string(), total_minor: z.number() })) }),
+  recent_orders: z.array(
+    z.object({
+      id: z.string(),
+      order_number: z.string(),
+      customer: z.string(),
+      cover_image_url: z.string().nullish(),
+      summary: z.string(),
+      status: z.enum(Object.keys(API_ORDER_STATUS) as [keyof typeof API_ORDER_STATUS]),
+      total_minor: z.number(),
+      created_at: z.string(),
+    }),
+  ),
+  tournaments: z.array(
+    z.object({
+      id: z.string(),
+      title: z.string(),
+      status: z.enum(Object.keys(API_TOURNAMENT_STATUS) as [keyof typeof API_TOURNAMENT_STATUS]),
+      region: z.string(),
+      prize_pool_minor: z.number(),
+      entries: z.number(),
+      player_slots: z.number().nullable(),
+    }),
+  ),
+  units_sold: z.array(z.object({ title: z.string(), units: z.number() })),
+  players_by_region: z.array(z.object({ region: z.string(), players: z.number() })),
+});
+
+export async function getDashboard(range: RangeDays): Promise<Dashboard> {
+  const [d, regions] = await Promise.all([apiFetch("/v1/admin/dashboard", apiDashboard, { query: { range: `${range}d` } }), getRegions()]);
+  // The API names a tournament's region by id or by name; either reads as the name.
+  const names = regionNames(regions);
+  const place = (region: string) => names[region] ?? (region.toLowerCase() === "global" ? "Global" : region);
+  const c = d.cards;
 
   return {
-    revenue: { value: revenueNow, change: change(revenueNow, revenuePrev) },
-    orders: { value: ordersNow, change: change(ordersNow, ordersPrev) },
-    players: { value: PLAYERS.length, change: change(PLAYERS.length, joinedBefore) },
-    activeTournaments: { value: active, change: 0 },
+    summary: {
+      revenue: { value: fromMinor(c.revenue.total_minor ?? 0), change: c.revenue.change_pct ?? null },
+      orders: { value: c.orders.total ?? 0, change: c.orders.change_pct ?? null },
+      players: { value: c.players.total ?? 0, change: c.players.change_pct ?? null },
+      activeTournaments: { value: c.live_tournaments.active, change: null },
+    },
+    registrationsOpen: c.live_tournaments.taking_registrations,
+    series: d.revenue_series.map((p) => ({ label: dayLabel(p.date), value: fromMinor(p.total_minor) })),
+    streams: d.revenue_by_stream.streams.map((s) => ({ key: s.key, label: STREAM_LABEL[s.key] ?? s.key, value: fromMinor(s.total_minor) })),
+    units: d.units_sold.map((u) => ({ key: u.title, label: u.title, value: u.units })),
+    playersByRegion: d.players_by_region.map((r) => ({ key: r.region, label: place(r.region), value: r.players })),
+    recentOrders: d.recent_orders.map((o) => ({
+      id: o.id,
+      reference: o.order_number,
+      customer: o.customer,
+      ...(o.cover_image_url && { image: o.cover_image_url }),
+      summary: o.summary,
+      status: API_ORDER_STATUS[o.status],
+      total: fromMinor(o.total_minor),
+      placedAt: o.created_at,
+    })),
+    tournaments: d.tournaments.filter((t) => t.status === "active" || t.status === "registration_open").map((t) => ({
+      id: t.id,
+      name: t.title,
+      status: API_TOURNAMENT_STATUS[t.status],
+      region: place(t.region),
+      prizePool: fromMinor(t.prize_pool_minor),
+      slots: { taken: t.entries, total: t.player_slots },
+    })),
   };
-}
-
-/** Daily revenue across the range, oldest first. */
-export async function getRevenueSeries(range: RangeDays): Promise<TimeSeriesPoint[]> {
-  await mockDelay(0);
-  return Array.from({ length: range }, (_, i) => {
-    const ago = range - 1 - i;
-    const date = new Date(MOCK_NOW - ago * DAY);
-    return {
-      label: new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric", timeZone: "Africa/Lagos" }).format(date),
-      value: sumRevenue(ago + 1, ago),
-    };
-  });
-}
-
-/** Where the money came from in the range. */
-export async function getRevenueByStream(range: RangeDays): Promise<ShareSlice[]> {
-  await mockDelay(0);
-  const sum = (type: Transaction["type"]) =>
-    TRANSACTIONS.filter((t) => isRevenue(t) && t.type === type && inWindow(t.createdAt, range)).reduce(
-      (s, t) => s + t.amount,
-      0,
-    );
-  return [
-    { key: "merch", label: "Merch", value: sum("merch") },
-    { key: "comic", label: "Comics", value: sum("comic") },
-  ];
-}
-
-/** Units sold per item in the range, cancelled orders excluded, most first. */
-export async function getUnitsByItem(range: RangeDays): Promise<ShareSlice[]> {
-  await mockDelay(0);
-  const units = new Map<string, ShareSlice>();
-  for (const order of ORDERS) {
-    if (order.status === "cancelled" || !inWindow(order.placedAt, range)) continue;
-    for (const line of order.lines) {
-      const slice = units.get(line.refId) ?? { key: line.refId, label: line.name, value: 0 };
-      slice.value += line.quantity;
-      units.set(line.refId, slice);
-    }
-  }
-  return [...units.values()].sort((a, b) => b.value - a.value);
-}
-
-/** Every registered player by region, named from the Regions list. Not range-scoped: it is a head count. */
-export async function getPlayersByRegion(): Promise<ShareSlice[]> {
-  await mockDelay(0);
-  const counts = new Map<RegionId, number>();
-  const names = regionNames(REGIONS);
-  for (const p of PLAYERS) counts.set(p.region, (counts.get(p.region) ?? 0) + 1);
-  return [...counts.entries()]
-    .map(([key, value]) => ({ key, label: regionName(key, names), value }))
-    .sort((a, b) => b.value - a.value);
 }

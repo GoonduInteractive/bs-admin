@@ -1,21 +1,13 @@
-import { SearchX } from "lucide-react";
-import Link from "next/link";
-import { EmptyState } from "@/components/shared/empty-state";
-import { Button } from "@/components/ui/button";
+import { NotFoundPanel } from "@/components/shared/not-found-panel";
 
+/**
+ * A 404 outside the dashboard shell: the comic reader's missing chapter, or
+ * anything the dashboard's own 404 doesn't cover. The same panel, full screen.
+ */
 export default function NotFound() {
   return (
-    <main className="grid min-h-svh place-items-center bg-background p-6">
-      <EmptyState
-        icon={SearchX}
-        title="Not found"
-        description="That page, or the record it points to, doesn't exist. It may have been deleted."
-        action={
-          <Button size="xl" render={<Link href="/" />}>
-            Back to the dashboard
-          </Button>
-        }
-      />
+    <main>
+      <NotFoundPanel fullScreen />
     </main>
   );
 }

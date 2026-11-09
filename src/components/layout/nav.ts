@@ -6,6 +6,7 @@ import {
   Settings,
   Shirt,
   ShoppingBag,
+  StickyNote,
   Trophy,
   Truck,
   Users,
@@ -38,6 +39,10 @@ export const NAV: NavGroup[] = [
       { title: "Players", href: "/players", icon: Users },
       { title: "Regions", href: "/regions", icon: MapPin },
     ],
+  },
+  {
+    label: "Community",
+    items: [{ title: "Notes", href: "/notes", icon: StickyNote }],
   },
 ];
 

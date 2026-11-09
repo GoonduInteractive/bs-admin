@@ -2,6 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
+import { failureMessage } from "@/lib/api/client";
 import { deleteProduct, getComic, getProduct, getProducts, getVolume, saveProduct } from "@/lib/api/merch";
 import { chapterName } from "@/lib/comics";
 import { STANDARD_COLOURS } from "@/lib/colours";
@@ -15,8 +16,15 @@ function slugify(s: string) {
 export async function saveProductAction(id: string | null, input: ProductInput) {
   const parsed = productSchema.safeParse(input);
   if (!parsed.success) return { error: parsed.error.issues[0]?.message ?? "Check the form" };
-  const v = parsed.data;
+  try {
+    return await saveFromForm(id, parsed.data);
+  } catch (e) {
+    return { error: failureMessage(e, "Couldn't save the product") };
+  }
+}
 
+/** Builds the product from the form and saves it; redirects to Products when it lands. */
+async function saveFromForm(id: string | null, v: ProductInput) {
   const existing = id ? await getProduct(id) : null;
   if (existing && existing.type !== v.type) {
     return { error: "A product's type can't change. Create a new product instead." };
@@ -36,7 +44,9 @@ export async function saveProductAction(id: string | null, input: ProductInput) 
     if (!comic) return { error: "That chapter no longer exists" };
     const volume = await getVolume(comic.volumeId).catch(() => undefined);
     const name = chapterName(comic, volume);
-    if (all.some((p) => p.type === "comics" && p.comicId === comic.id && p.id !== id)) {
+    // Another product selling this chapter is a clash; this product keeping its own chapter is not.
+    const ownChapter = existing?.type === "comics" && existing.comicId === comic.id;
+    if (!ownChapter && all.some((p) => p.type === "comics" && p.comicId === comic.id && p.id !== id)) {
       return { error: `${name} is already in the store` };
     }
     const blocked = v.status === "active" ? onSaleBlocker(comic) : null;
@@ -100,15 +110,19 @@ export async function saveProductAction(id: string | null, input: ProductInput) 
     };
   }
 
-  await saveProduct(product);
+  await saveProduct(product, !existing);
   revalidatePath("/products");
   revalidatePath("/comics");
   revalidatePath("/");
   redirect("/products");
 }
 
-export async function deleteProductAction(id: string) {
-  await deleteProduct(id);
+export async function deleteProductAction() {
+  try {
+    await deleteProduct();
+  } catch (e) {
+    return { error: failureMessage(e, "Couldn't delete the product") };
+  }
   revalidatePath("/products");
   return { ok: true as const };
 }

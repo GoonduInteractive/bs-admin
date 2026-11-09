@@ -61,7 +61,7 @@ export async function deleteRegionAction(id: string) {
     if (!region) return { error: "That region no longer exists" };
     const inUse = players.filter((p) => isRegion(region, p.region)).length + tournaments.filter((t) => isRegion(region, t.region)).length;
     if (inUse) return { error: "Players or tournaments use this region. Archive it instead." };
-    await deleteRegion(id);
+    await deleteRegion();
     refresh();
     return { ok: true as const };
   } catch (e) {

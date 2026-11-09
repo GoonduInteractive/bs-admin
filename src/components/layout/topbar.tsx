@@ -1,9 +1,10 @@
 "use client";
 
-import { Bell, ChevronDown, LogOut, Search, Settings, UserRound } from "lucide-react";
+import { Bell, CheckCheck, ChevronDown, LogOut, Search, Settings, UserRound } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useState, useTransition } from "react";
+import { toast } from "sonner";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import {
@@ -20,7 +21,9 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { SidebarTrigger } from "@/components/ui/sidebar";
 import { ThemeToggle } from "@/components/theme/theme-toggle";
 import { SignOutDialog } from "./sign-out-dialog";
-import { initials } from "@/lib/format";
+import { markAllNotificationsReadAction, markNotificationReadAction } from "./notification-actions";
+import { formatDateTime, initials } from "@/lib/format";
+import type { AdminNotification } from "@/lib/api/notifications";
 import type { AdminUser } from "@/types";
 import { cn } from "@/lib/utils";
 
@@ -66,25 +69,107 @@ function GlobalSearch() {
   );
 }
 
-function Notifications({ notices }: { notices: Notice[] }) {
+/**
+ * The API's notifications, newest first, the unread ones marked. Opening
+ * one marks it read; "Mark all read" clears the lot. One that names something
+ * the admin has a page for links there.
+ */
+function ServerNotifications({ feed }: { feed: NotificationFeed }) {
+  const [pending, start] = useTransition();
+  const markRead = (n: AdminNotification) => {
+    if (n.read) return;
+    start(async () => {
+      const res = await markNotificationReadAction(n.id);
+      if ("error" in res) toast.error(res.error);
+    });
+  };
+  const markAll = () =>
+    start(async () => {
+      const res = await markAllNotificationsReadAction();
+      if ("error" in res) toast.error(res.error);
+    });
+
+  return (
+    <>
+      <div className="flex items-center justify-between border-b px-4 py-3">
+        <p className="text-sm font-medium">
+          Notifications
+          {/* A real space, so a screen reader doesn't run the word into the count. */}
+          {feed.unread > 0 && (
+            <>
+              {" "}
+              <span className="ml-1 text-xs font-normal text-muted-foreground">{feed.unread} unread</span>
+            </>
+          )}
+        </p>
+        {feed.unread > 0 && (
+          <Button variant="ghost" size="xs" disabled={pending} onClick={markAll}>
+            <CheckCheck />
+            Mark all read
+          </Button>
+        )}
+      </div>
+      <ul className="divide-y">
+        {feed.items.length === 0 && <li className="px-4 py-6 text-center text-sm text-muted-foreground">No notifications yet.</li>}
+        {feed.items.map((n) => {
+          const content = (
+            <>
+              <span className={cn("mt-1.5 size-2 shrink-0 rounded-full", n.read ? "bg-transparent" : "bg-signal")} aria-hidden />
+              <span className="min-w-0">
+                <span className={cn("block text-sm", !n.read && "font-medium")}>{n.title}</span>
+                <span className="block text-xs text-muted-foreground">{n.body}</span>
+                <span className="mt-0.5 block text-[0.6875rem] text-muted-foreground">
+                  {formatDateTime(n.sentAt)}
+                  {!n.read && <span className="sr-only">, unread</span>}
+                </span>
+              </span>
+            </>
+          );
+          const row = "flex w-full gap-3 px-4 py-3 text-left hover:bg-paper";
+          return (
+            <li key={n.id}>
+              {n.href ? (
+                <Link href={n.href} className={row} onClick={() => markRead(n)}>
+                  {content}
+                </Link>
+              ) : (
+                <button type="button" className={cn(row, "cursor-pointer")} onClick={() => markRead(n)}>
+                  {content}
+                </button>
+              )}
+            </li>
+          );
+        })}
+      </ul>
+    </>
+  );
+}
+
+function Notifications({ notices, feed }: { notices: Notice[]; feed: NotificationFeed | null }) {
+  const unread = feed?.unread ?? 0;
+  const label = feed ? `Notifications (${unread} unread, ${notices.length} need attention)` : `Notifications (${notices.length})`;
+  // What's waiting inside: the unread notifications and what needs attention, as the sidebar counts its badges.
+  const count = unread + notices.length;
   return (
     <Popover>
-      <PopoverTrigger
-        render={
-          <Button variant="outline" size="icon" className="relative size-10 rounded-full" aria-label={`Notifications (${notices.length})`} />
-        }
-      >
+      <PopoverTrigger render={<Button variant="outline" size="icon" className="relative size-10 rounded-full" aria-label={label} />}>
         <Bell className="size-4.5" />
-        {notices.length > 0 && (
-          <span className="absolute top-2 right-2.5 size-2 rounded-full bg-signal ring-2 ring-card" />
+        {count > 0 && (
+          <span
+            aria-hidden
+            className="absolute -top-1 -right-1 grid h-5 min-w-5 place-items-center rounded-full bg-signal px-1 text-[0.6875rem] leading-none font-semibold text-white tabular-nums ring-2 ring-card"
+          >
+            {count > 99 ? "99+" : count}
+          </span>
         )}
       </PopoverTrigger>
-      <PopoverContent align="end" className="w-80 p-0">
-        <div className="flex items-center justify-between border-b px-4 py-3">
+      <PopoverContent align="end" className="max-h-128 w-80 overflow-y-auto p-0">
+        {feed && <ServerNotifications feed={feed} />}
+        <div className={cn("flex items-center justify-between border-b px-4 py-3", feed && "border-t")}>
           <p className="text-sm font-medium">Needs attention</p>
           <span className="text-xs text-muted-foreground">{notices.length}</span>
         </div>
-        <ul className="max-h-80 divide-y overflow-y-auto">
+        <ul className={cn("divide-y", !feed && "max-h-80 overflow-y-auto")}>
           {notices.length === 0 && <li className="px-4 py-6 text-center text-sm text-muted-foreground">All clear.</li>}
           {notices.map((n) => (
             <li key={n.id}>
@@ -110,7 +195,10 @@ function Notifications({ notices }: { notices: Notice[] }) {
   );
 }
 
-export function Topbar({ admin, notices }: { admin: AdminUser; notices: Notice[] }) {
+/** The API's notifications for the bell; null when they couldn't be read. */
+export type NotificationFeed = { items: AdminNotification[]; unread: number };
+
+export function Topbar({ admin, notices, feed = null }: { admin: AdminUser; notices: Notice[]; feed?: NotificationFeed | null }) {
   const [signingOut, setSigningOut] = useState(false);
 
   return (
@@ -120,7 +208,7 @@ export function Topbar({ admin, notices }: { admin: AdminUser; notices: Notice[]
 
       <div className="ml-auto flex items-center gap-3">
         <ThemeToggle />
-        <Notifications notices={notices} />
+        <Notifications notices={notices} feed={feed} />
 
         <DropdownMenu>
           <DropdownMenuTrigger

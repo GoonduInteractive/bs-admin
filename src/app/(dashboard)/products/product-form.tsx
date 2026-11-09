@@ -203,7 +203,7 @@ export function ProductForm({
   function remove() {
     if (!product) return;
     startDelete(async () => {
-      await deleteProductAction(product.id);
+      await deleteProductAction();
       toast.success(`${product.name} deleted`);
       router.push("/products");
     });

@@ -193,7 +193,7 @@ export default async function TournamentPage({ params, searchParams }: PageProps
       </nav>
 
       {tab === "overview" && <Overview t={t} region={region} />}
-      {tab === "bracket" && (stagePosition(t.stages).current?.key === "qualifiers" ? <QualifierBoard tournament={t} /> : <Bracket rounds={t.bracket} slug={t.slug} />)}
+      {tab === "bracket" && (stagePosition(t.stages).current?.key === "qualifiers" ? <QualifierBoard tournament={t} /> : <Bracket rounds={t.bracket} slug={t.slug} projected={t.projected} />)}
       {tab === "players" && <Participants slug={t.slug} name={t.name} participants={t.participants} names={names} />}
       {tab === "settings" && <TournamentForm tournament={t} regions={regions} />}
     </>

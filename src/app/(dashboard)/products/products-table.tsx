@@ -15,15 +15,12 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { formatCount, formatNaira } from "@/lib/format";
-import { formatsOnSale, priceLabel, unitsSold } from "@/lib/comics";
 import { COMIC_FORMAT, PRODUCT_STATUS, PRODUCT_TYPE, STOCK_STATUS } from "@/lib/labels";
-import { priceRange } from "@/lib/pricing";
-import { stockStatus, totalStock } from "@/lib/stock";
 import { cn } from "@/lib/utils";
-import type { Product } from "@/types";
+import type { ProductRow } from "@/types";
 import { setProductStatusAction } from "./actions";
 
-function RowMenu({ product }: { product: Product }) {
+function RowMenu({ product }: { product: ProductRow }) {
   const [pending, start] = useTransition();
   const archived = product.status === "archived";
 
@@ -53,30 +50,29 @@ function RowMenu({ product }: { product: Product }) {
 }
 
 /** A comic's formats and prices, one per line; merch's price, or its range when a variant is priced differently. */
-function Prices({ p }: { p: Product }) {
-  if (p.type === "apparel") return <span className="tabular whitespace-nowrap">{priceLabel(p)}</span>;
-  const on = formatsOnSale(p);
-  if (!on.length) return <span className="text-muted-foreground">Not on sale</span>;
+function Prices({ p }: { p: ProductRow }) {
+  if (p.type === "apparel") return <span className="tabular whitespace-nowrap">{p.priceLabel}</span>;
+  if (!p.formats.length) return <span className="text-muted-foreground">Not on sale</span>;
   return (
     <span className="block text-sm">
-      {on.map((f) => (
-        <span key={f} className="block whitespace-nowrap">
-          <span className="text-muted-foreground">{COMIC_FORMAT[f]}</span>{" "}
-          <span className="tabular">{f === "online" && p.formats.online.free ? "Free" : formatNaira(p.formats[f].price)}</span>
+      {p.formats.map((f) => (
+        <span key={f.format} className="block whitespace-nowrap">
+          <span className="text-muted-foreground">{COMIC_FORMAT[f.format]}</span>{" "}
+          <span className="tabular">{f.free ? "Free" : formatNaira(f.price)}</span>
         </span>
       ))}
     </span>
   );
 }
 
-const columns: Column<Product>[] = [
+const columns: Column<ProductRow>[] = [
   {
     id: "product",
     header: "Product",
     cell: (p) => (
       <Link href={`/products/${p.id}`} className="flex items-center gap-3">
         <span className={cn("relative size-12 shrink-0 overflow-hidden rounded-lg", p.type === "comics" ? "bg-entry" : "bg-linen")}>
-          <Thumb src={p.image} alt="" fill sizes="48px" className={p.type === "comics" ? "object-cover object-top" : "object-contain p-1"} />
+          {p.image && <Thumb src={p.image} alt="" fill sizes="48px" className={p.type === "comics" ? "object-cover object-top" : "object-contain p-1"} />}
         </span>
         <span className="flex items-center gap-2 font-medium">
           {p.name}
@@ -98,37 +94,30 @@ const columns: Column<Product>[] = [
     id: "price",
     header: "Price",
     cell: (p) => <Prices p={p} />,
-    sortValue: (p) => (p.type === "apparel" ? priceRange(p).lo : Math.min(...formatsOnSale(p).map((f) => p.formats[f].price), Infinity)),
-    csv: (p) => (p.type === "apparel" ? priceLabel(p) : formatsOnSale(p).map((f) => `${COMIC_FORMAT[f]} ${p.formats[f].price}`).join("; ")),
-    pdf: (p) => priceLabel(p),
+    sortValue: (p) => p.priceFrom ?? Infinity,
+    csv: (p) => (p.type === "apparel" ? p.priceLabel : p.formats.map((f) => `${COMIC_FORMAT[f.format]} ${f.price}`).join("; ")),
+    pdf: (p) => p.priceLabel,
   },
   {
     id: "stock",
     header: "In stock",
-    cell: (p) =>
-      stockStatus(p) ? <span className="tabular">{formatCount(totalStock(p))}</span> : <span className="text-muted-foreground">—</span>,
-    sortValue: (p) => (stockStatus(p) ? totalStock(p) : -1),
-    csv: (p) => (stockStatus(p) ? totalStock(p) : ""),
+    cell: (p) => (p.stock !== null ? <span className="tabular">{formatCount(p.stock)}</span> : <span className="text-muted-foreground">—</span>),
+    sortValue: (p) => p.stock ?? -1,
+    csv: (p) => p.stock ?? "",
   },
   {
     id: "stockStatus",
     header: "Stock status",
-    cell: (p) => {
-      const s = stockStatus(p);
-      // A comic sold only online has nothing on a shelf to run out of.
-      return s ? <StatusBadge {...STOCK_STATUS[s]} /> : <StatusBadge label="Digital only" tone="info" />;
-    },
-    csv: (p) => {
-      const s = stockStatus(p);
-      return s ? STOCK_STATUS[s].label : "Digital only";
-    },
+    // A comic sold only online has nothing on a shelf to run out of.
+    cell: (p) => (p.stockStatus ? <StatusBadge {...STOCK_STATUS[p.stockStatus]} /> : <StatusBadge label="Digital only" tone="info" />),
+    csv: (p) => (p.stockStatus ? STOCK_STATUS[p.stockStatus].label : "Digital only"),
   },
   {
     id: "sold",
     header: "Sold",
-    cell: (p) => <span className="tabular">{formatCount(unitsSold(p))}</span>,
-    sortValue: (p) => unitsSold(p),
-    csv: (p) => unitsSold(p),
+    cell: (p) => <span className="tabular">{formatCount(p.sold)}</span>,
+    sortValue: (p) => p.sold,
+    csv: (p) => p.sold,
   },
   {
     id: "status",
@@ -144,7 +133,7 @@ const columns: Column<Product>[] = [
   },
 ];
 
-const filters: Filter<Product>[] = [
+const filters: Filter<ProductRow>[] = [
   {
     id: "type",
     label: "Type",
@@ -158,7 +147,7 @@ const filters: Filter<Product>[] = [
       ...Object.entries(STOCK_STATUS).map(([value, s]) => ({ value, label: s.label })),
       { value: "digital", label: "Digital only" },
     ],
-    predicate: (p, v) => (stockStatus(p) ?? "digital") === v,
+    predicate: (p, v) => (p.stockStatus ?? "digital") === v,
   },
   {
     id: "status",
@@ -168,7 +157,7 @@ const filters: Filter<Product>[] = [
   },
 ];
 
-export function ProductsTable({ products }: { products: Product[] }) {
+export function ProductsTable({ products }: { products: ProductRow[] }) {
   return (
     <DataTable
       rows={products}

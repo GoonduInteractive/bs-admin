@@ -1,128 +1,146 @@
 import "server-only";
-import type { Comic, ComicVolume, FreeShippingPromo, Product, StateShipping } from "@/types";
-import { COMICS, PRODUCTS, VOLUMES } from "@/lib/mock/catalogue";
-import { FREE_SHIPPING, SHIPPING } from "@/lib/mock/shipping";
-import { NotFoundError, mockDelay } from "./client";
+import { z } from "zod";
+import type { FreeShippingPromo, ShippingStats, StateShipping } from "@/types";
+import { STATES, lgasOf } from "@/lib/shipping";
+import { apiFetch, apiFetchAll, fromMinor } from "./client";
 
 /**
- * Products, and comics: volumes and the chapters compiled into them.
- *
- * MOCK: reads and writes the in-memory fixtures. Writes last until the dev
- * server restarts, which is enough to click through a create-edit-delete flow.
- * Swap each body for `apiFetch` when the endpoints land.
+ * The store: products and comics (in `products.ts` and `comics.ts`,
+ * re-exported here so pages keep one import) and shipping. See each module for
+ * what the API can and can't do yet.
  */
 
-/* ---- Products ---------------------------------------------------------- */
-
-export async function getProducts(): Promise<Product[]> {
-  await mockDelay();
-  return [...PRODUCTS];
-}
-
-export async function getProduct(id: string): Promise<Product> {
-  await mockDelay();
-  const product = PRODUCTS.find((p) => p.id === id);
-  if (!product) throw new NotFoundError("Product", id);
-  return product;
-}
-
-export async function saveProduct(product: Product): Promise<Product> {
-  await mockDelay();
-  const i = PRODUCTS.findIndex((p) => p.id === product.id);
-  if (i === -1) PRODUCTS.unshift(product);
-  else PRODUCTS[i] = product;
-  return product;
-}
-
-export async function deleteProduct(id: string): Promise<void> {
-  await mockDelay();
-  const i = PRODUCTS.findIndex((p) => p.id === id);
-  if (i !== -1) PRODUCTS.splice(i, 1);
-}
-
-/* ---- Comics ------------------------------------------------------------ */
-
-export async function getComics(): Promise<Comic[]> {
-  await mockDelay();
-  // Reading order: by volume, then chapter.
-  const volumeNo = new Map(VOLUMES.map((v) => [v.id, v.number]));
-  return [...COMICS].sort((a, b) => (volumeNo.get(a.volumeId) ?? 0) - (volumeNo.get(b.volumeId) ?? 0) || a.chapter - b.chapter);
-}
-
-export async function getComic(id: string): Promise<Comic> {
-  await mockDelay();
-  const comic = COMICS.find((c) => c.id === id);
-  if (!comic) throw new NotFoundError("Comic", id);
-  return comic;
-}
-
-export async function saveComic(comic: Comic): Promise<Comic> {
-  await mockDelay();
-  const i = COMICS.findIndex((c) => c.id === comic.id);
-  if (i === -1) COMICS.unshift(comic);
-  else COMICS[i] = comic;
-  return comic;
-}
-
-export async function deleteComic(id: string): Promise<void> {
-  await mockDelay();
-  const i = COMICS.findIndex((c) => c.id === id);
-  if (i !== -1) COMICS.splice(i, 1);
-}
-
-/* ---- Volumes ----------------------------------------------------------- */
-
-export async function getVolumes(): Promise<ComicVolume[]> {
-  await mockDelay();
-  return [...VOLUMES].sort((a, b) => a.number - b.number);
-}
-
-export async function getVolume(id: string): Promise<ComicVolume> {
-  await mockDelay();
-  const volume = VOLUMES.find((v) => v.id === id);
-  if (!volume) throw new NotFoundError("Volume", id);
-  return volume;
-}
-
-export async function saveVolume(volume: ComicVolume): Promise<ComicVolume> {
-  await mockDelay();
-  const i = VOLUMES.findIndex((v) => v.id === volume.id);
-  if (i === -1) VOLUMES.push(volume);
-  else VOLUMES[i] = volume;
-  return volume;
-}
-
-export async function deleteVolume(id: string): Promise<void> {
-  await mockDelay();
-  const i = VOLUMES.findIndex((v) => v.id === id);
-  if (i !== -1) VOLUMES.splice(i, 1);
-}
+export * from "./products";
+export * from "./comics";
 
 /* ---- Shipping ---------------------------------------------------------- */
+/*
+ * The API lists a state's local governments by
+ * name, each with the price that applies there; the admin keys them by
+ * `nigeria-lga-data` id and keeps only the ones priced on their own. Prices
+ * come back in kobo (`*_price_minor`, since 2026-11-04; the free-shipping
+ * minimum's `min_order_minor` always did) and go up in naira (`delivery`,
+ * `pickup`, `minimum_order`), the same as a product's `price`.
+ */
+
+const apiLga = z.object({ lga_name: z.string(), delivery_price_minor: z.coerce.number(), pickup_price_minor: z.coerce.number() });
+const apiState = z.object({
+  state: z.string(),
+  delivery_price_minor: z.coerce.number(),
+  pickup_price_minor: z.coerce.number(),
+  updated_at: z.string(),
+  lgas: z.array(apiLga).default([]),
+});
+
+/** "Eti-Osa" and "Eti Osa" are the same place. */
+const squash = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, "");
+
+function toStateShipping(s: z.output<typeof apiState>): StateShipping {
+  const state = STATES.find((n) => squash(n) === squash(s.state)) ?? s.state;
+  const ids = new Map(lgasOf(state).map((l) => [squash(l.name), l.id]));
+  const lgas: StateShipping["lgas"] = {};
+  for (const l of s.lgas) {
+    const id = ids.get(squash(l.lga_name));
+    if (!id) continue;
+    // A local government whose price matches the state's simply follows it.
+    const own = {
+      ...(l.delivery_price_minor !== s.delivery_price_minor && { homeDelivery: fromMinor(l.delivery_price_minor) }),
+      ...(l.pickup_price_minor !== s.pickup_price_minor && { pickup: fromMinor(l.pickup_price_minor) }),
+    };
+    if (Object.keys(own).length) lgas[id] = own;
+  }
+  return { state, homeDelivery: fromMinor(s.delivery_price_minor), pickup: fromMinor(s.pickup_price_minor), lgas, updatedAt: s.updated_at };
+}
 
 /** Every state's shipping prices, A to Z. */
 export async function getShippingRates(): Promise<StateShipping[]> {
-  await mockDelay();
-  return [...SHIPPING].sort((a, b) => a.state.localeCompare(b.state));
+  const rates = (await apiFetchAll("/v1/admin/shipping", apiState)).map(toStateShipping);
+  return rates.sort((a, b) => a.state.localeCompare(b.state));
+}
+
+/*
+ * `GET /v1/admin/shipping/stats`. Its price ranges aren't read: they carry no
+ * unit, and the prices around them moved to kobo on 2026-11-04. The cards work
+ * them out from the states' own prices, so they can't disagree with the table.
+ * Its `min_order_minor` isn't read either: the page shows the free-shipping
+ * minimum from the promotion itself, the same figure its form edits.
+ */
+const apiShippingStats = z.object({
+  priced_states: z.coerce.number(),
+  free_shipping_config: z.object({ status: z.enum(["scheduled", "off", "expired", "on"]) }),
+});
+
+const PROMO_PHASE = { on: "live", expired: "ended", scheduled: "scheduled", off: "off" } as const;
+
+/** States priced, the price ranges and where the free shipping promotion stands. */
+export async function getShippingStats(): Promise<ShippingStats> {
+  const rates = await getShippingRates();
+  const span = (prices: number[]) => (prices.length ? { min: Math.min(...prices), max: Math.max(...prices) } : null);
+  const own = (key: "homeDelivery" | "pickup") =>
+    rates.flatMap((s) => [s[key], ...Object.values(s.lgas).flatMap((l) => (l[key] == null ? [] : [l[key]]))]);
+  const ranges = { homeDelivery: span(own("homeDelivery")), pickup: span(own("pickup")) };
+  const s = await apiFetch("/v1/admin/shipping/stats", apiShippingStats);
+  return { pricedStates: s.priced_states, ...ranges, promo: PROMO_PHASE[s.free_shipping_config.status] };
 }
 
 export async function saveStateShipping(rates: StateShipping): Promise<StateShipping> {
-  await mockDelay();
-  const i = SHIPPING.findIndex((s) => s.state === rates.state);
-  if (i === -1) SHIPPING.push(rates);
-  else SHIPPING[i] = rates;
+  await apiFetch("/v1/admin/shipping", z.unknown(), {
+    method: "PATCH",
+    body: {
+      state_name: rates.state,
+      delivery: rates.homeDelivery,
+      pickup: rates.pickup,
+      // Every local government with the price that applies there: the API wants at least one,
+      // and an explicit price for each leaves the backend nothing to guess about a blank.
+      lgas: lgasOf(rates.state).map((l) => ({
+        lga_name: l.name,
+        delivery: rates.lgas[l.id]?.homeDelivery ?? rates.homeDelivery,
+        pickup: rates.lgas[l.id]?.pickup ?? rates.pickup,
+      })),
+    },
+  });
   return rates;
 }
 
+/**
+ * Never set up, the API has no promotion to return: that reads as switched off.
+ * The spec names the end date `ends_at`, but the live reply leaves it out, and
+ * the PATCH calls it `end_at`, so either name is read and a missing date is none.
+ */
+const apiPromo = z
+  .object({
+    active: z.boolean(),
+    min_order_minor: z.coerce.number().nullish(),
+    start_at: z.string().nullish(),
+    ends_at: z.string().nullish(),
+    end_at: z.string().nullish(),
+  })
+  .nullable();
+
 /** The free shipping promotion. */
 export async function getFreeShipping(): Promise<FreeShippingPromo> {
-  await mockDelay();
-  return { ...FREE_SHIPPING };
+  const p = await apiFetch("/v1/admin/shipping/free-shipping-config", apiPromo);
+  if (!p) return { enabled: false, minimumOrder: 0 };
+  const endsAt = p.ends_at ?? p.end_at;
+  return {
+    enabled: p.active,
+    minimumOrder: fromMinor(p.min_order_minor ?? 0),
+    ...(p.start_at && { startsAt: p.start_at }),
+    ...(endsAt && { endsAt }),
+  };
 }
 
 export async function saveFreeShipping(promo: FreeShippingPromo): Promise<FreeShippingPromo> {
-  await mockDelay();
-  // Cleared first, so a date taken off the form is gone rather than kept.
-  Object.assign(FREE_SHIPPING, { startsAt: undefined, endsAt: undefined }, promo);
+  await apiFetch("/v1/admin/shipping/free-shipping-config", z.unknown(), {
+    method: "PATCH",
+    body: {
+      active: promo.enabled,
+      minimum_order: promo.minimumOrder,
+      // The API only takes a start date in the future ("Start date must be in the future"). A past one is the
+      // running promotion's own, which the form fills back in, so it isn't sent again; the promotion keeps it.
+      ...(promo.startsAt && Date.parse(promo.startsAt) > Date.now() && { start_at: promo.startsAt }),
+      ...(promo.endsAt && { end_at: promo.endsAt }),
+    },
+  });
   return promo;
 }

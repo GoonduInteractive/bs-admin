@@ -47,8 +47,12 @@ export function formatChange(change: number): string {
   return `${sign}${change.toFixed(1)}%`;
 }
 
+/** A missing or unreadable date: shown as a dash, since formatting one throws. */
+const missing = (iso: string) => !iso || Number.isNaN(Date.parse(iso));
+
 /** Sep 15, 2026 */
 export function formatDate(iso: string): string {
+  if (missing(iso)) return "—";
   return new Intl.DateTimeFormat("en-US", {
     timeZone: TZ,
     month: "short",
@@ -59,6 +63,7 @@ export function formatDate(iso: string): string {
 
 /** Sep 15, 2026, 4:30 PM */
 export function formatDateTime(iso: string): string {
+  if (missing(iso)) return "—";
   return new Intl.DateTimeFormat("en-US", {
     timeZone: TZ,
     month: "short",
@@ -71,6 +76,7 @@ export function formatDateTime(iso: string): string {
 
 /** 4:30 PM */
 export function formatTime(iso: string): string {
+  if (missing(iso)) return "—";
   return new Intl.DateTimeFormat("en-US", {
     timeZone: TZ,
     hour: "numeric",

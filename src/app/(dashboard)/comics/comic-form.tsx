@@ -17,13 +17,23 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Textarea } from "@/components/ui/textarea";
 import { chapterName } from "@/lib/comics";
+import { COVER_BAND } from "@/lib/labels";
 import { formatDateTime } from "@/lib/format";
 import { fromLagosInput, toLagosInput } from "@/lib/lagos-time";
 import { comicSchema, type ChapterPricingInput, type ComicInput } from "@/lib/schemas";
-import type { Comic, ComicVolume } from "@/types";
+import type { Comic, ComicVolume, CoverBand } from "@/types";
 import { deleteComicAction, saveComicAction } from "./actions";
+import { CoverPreview } from "./cover-preview";
 import { PageManager } from "./page-manager";
 import { PricePrompt } from "./price-prompt";
+
+const COVER_STYLE = [
+  { value: "torn", title: "Title band", body: "The site lays its torn band over the top, with the volume tag and title." },
+  { value: "full", title: "Full image", body: "The cover already has its title on it: shown as it is." },
+] as const;
+
+/** The volume plate a chapter's cover starts with. */
+const volumeTag = (volume: ComicVolume | undefined) => (volume ? `VOL. ${volume.number}` : "");
 
 const RELEASE = [
   { value: "draft", title: "Draft", body: "Only admins can see it." },
@@ -40,7 +50,8 @@ const NOT_PRICED: ChapterSale = {
   formats: { online: { enabled: true, free: false, price: "" }, physical: { enabled: false, price: "", stock: 0 } },
 };
 
-function toInput(c: Comic | undefined, volumeId: string, chapter: number): ComicInput {
+function toInput(c: Comic | undefined, volumeId: string, chapter: number, volumes: ComicVolume[]): ComicInput {
+  const volume = volumes.find((v) => v.id === (c?.volumeId ?? volumeId));
   return {
     title: c?.title ?? "",
     volumeId: c?.volumeId ?? volumeId,
@@ -49,6 +60,10 @@ function toInput(c: Comic | undefined, volumeId: string, chapter: number): Comic
     status: c?.status ?? "draft",
     publishAt: c?.status === "scheduled" ? toLagosInput(c.publishAt) : "",
     cover: c?.cover ?? "",
+    coverStyle: c?.coverStyle ?? "torn",
+    coverTitle: c?.coverTitle ?? "",
+    coverVolume: c?.coverVolume ?? volumeTag(volume),
+    coverBand: c?.coverBand ?? "menu",
     pages: c?.pages.map((p) => ({ id: p.id, src: p.src })) ?? [],
   };
 }
@@ -56,6 +71,11 @@ function toInput(c: Comic | undefined, volumeId: string, chapter: number): Comic
 /**
  * Add or edit a chapter: which volume it's compiled into, its number there,
  * its own title, cover and pages, and when it's released.
+ *
+ * THE COVER STYLE is how the site draws the upload: under its torn title band
+ * (volume tag, title, band colour), or as it is, for art that has its own. Kept
+ * only once the API saves it (`coverStyles`); till then the site titles every
+ * cover, and the panel says so.
  */
 export function ComicForm({
   comic,
@@ -63,6 +83,7 @@ export function ComicForm({
   nextChapter,
   startVolumeId,
   sale = NOT_PRICED,
+  coverStyles,
 }: {
   comic?: Comic;
   /** Every volume, in order. A chapter must belong to one. */
@@ -76,6 +97,8 @@ export function ComicForm({
    * pre-fill the prompt). Unpriced, scheduling or publishing asks for one.
    */
   sale?: ChapterSale;
+  /** Whether the API keeps a chapter's Cover style (`getCoverStylesSaved`). */
+  coverStyles: boolean;
 }) {
   const router = useRouter();
   const [saving, startSave] = useTransition();
@@ -84,10 +107,13 @@ export function ComicForm({
   const firstVolume = startVolumeId ?? volumes.at(-1)?.id ?? "";
   const form = useForm<ComicInput>({
     resolver: zodResolver(comicSchema),
-    defaultValues: toInput(comic, firstVolume, nextChapter[firstVolume] ?? 1),
+    defaultValues: toInput(comic, firstVolume, nextChapter[firstVolume] ?? 1, volumes),
   });
   const { errors } = form.formState;
-  const [status, volumeId, chapterNo, title] = useWatch({ control: form.control, name: ["status", "volumeId", "chapter", "title"] });
+  const [status, volumeId, chapterNo, title, cover, coverStyle, coverTitle, coverVolume, coverBand] = useWatch({
+    control: form.control,
+    name: ["status", "volumeId", "chapter", "title", "cover", "coverStyle", "coverTitle", "coverVolume", "coverBand"],
+  });
   const volume = volumes.find((v) => v.id === volumeId);
 
   // A new chapter follows its volume: switch volume and it takes that volume's next number,
@@ -95,6 +121,7 @@ export function ComicForm({
   const pickVolume = (id: string) => {
     form.setValue("volumeId", id, { shouldDirty: true, shouldValidate: form.formState.isSubmitted });
     if (!comic && !form.getFieldState("chapter").isDirty) form.setValue("chapter", nextChapter[id] ?? 1);
+    if (!comic && !form.getFieldState("coverVolume").isDirty) form.setValue("coverVolume", volumeTag(volumes.find((v) => v.id === id)));
   };
 
   const save = (values: ComicInput, pricing?: ChapterPricingInput) =>
@@ -207,6 +234,78 @@ export function ComicForm({
             )}
           />
           <FieldError className="mt-2" errors={[errors.cover]} />
+
+          {coverStyles ? (
+            <FieldGroup className="mt-5">
+              <Controller
+                control={form.control}
+                name="coverStyle"
+                render={({ field }) => (
+                  <RadioGroup value={field.value} onValueChange={field.onChange} aria-label="How the site shows the cover" className="gap-2">
+                    {COVER_STYLE.map((o) => (
+                      <FieldLabel key={o.value} htmlFor={`coverStyle-${o.value}`} className="rounded-lg border has-data-checked:border-primary has-data-checked:bg-paper">
+                        <Field orientation="horizontal" className="p-3">
+                          <RadioGroupItem value={o.value} id={`coverStyle-${o.value}`} />
+                          <FieldContent>
+                            <FieldTitle>{o.title}</FieldTitle>
+                            <FieldDescription>{o.body}</FieldDescription>
+                          </FieldContent>
+                        </Field>
+                      </FieldLabel>
+                    ))}
+                  </RadioGroup>
+                )}
+              />
+              {coverStyle === "torn" && (
+                <>
+                  <Field data-invalid={!!errors.coverVolume}>
+                    <FieldLabel htmlFor="coverVolume">Volume tag</FieldLabel>
+                    <Input id="coverVolume" className="h-10" placeholder="VOL. 1" aria-invalid={!!errors.coverVolume} {...form.register("coverVolume")} />
+                    <FieldDescription>The small plate above the title. Leave it empty for none.</FieldDescription>
+                    <FieldError errors={[errors.coverVolume]} />
+                  </Field>
+                  <Field data-invalid={!!errors.coverTitle}>
+                    <FieldLabel htmlFor="coverTitle">Cover title</FieldLabel>
+                    <Textarea id="coverTitle" rows={2} placeholder={title.trim() || "The chapter title"} aria-invalid={!!errors.coverTitle} {...form.register("coverTitle")} />
+                    <FieldDescription>Empty uses the chapter title. Press Enter to break the line.</FieldDescription>
+                    <FieldError errors={[errors.coverTitle]} />
+                  </Field>
+                  <Field>
+                    <FieldLabel htmlFor="coverBand">Band colour</FieldLabel>
+                    <Select value={coverBand} onValueChange={(v) => form.setValue("coverBand", v as CoverBand, { shouldDirty: true })}>
+                      <SelectTrigger id="coverBand" className="w-full data-[size=default]:h-10">
+                        <SelectValue>{(v: CoverBand) => <BandOption band={v} />}</SelectValue>
+                      </SelectTrigger>
+                      <SelectContent>
+                        {(Object.keys(COVER_BAND) as CoverBand[]).map((b) => (
+                          <SelectItem key={b} value={b}>
+                            <BandOption band={b} />
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </Field>
+                </>
+              )}
+            </FieldGroup>
+          ) : (
+            <p className="mt-4 text-sm text-muted-foreground">
+              The site shows this cover under its title band, with the chapter title. The style, volume tag and band colour can be chosen here once the server saves them.
+            </p>
+          )}
+
+          {cover && (
+            <div className="mt-5">
+              <p className="mb-2 text-sm font-medium">On the site</p>
+              <div className="mx-auto max-w-56">
+                {coverStyles ? (
+                  <CoverPreview src={cover} style={coverStyle} title={coverTitle.trim() || title.trim() || "Chapter title"} volume={coverVolume.trim()} band={coverBand} />
+                ) : (
+                  <CoverPreview src={cover} style="torn" title={title.trim() || "Chapter title"} volume="" band="menu" />
+                )}
+              </div>
+            </div>
+          )}
         </Panel>
 
         <Panel title="Release">
@@ -262,7 +361,12 @@ export function ComicForm({
               description="Readers lose access immediately. Print orders already placed are not affected."
               confirmLabel="Delete"
               destructive
-              onConfirm={() => startDelete(() => deleteComicAction(comic.id))}
+              onConfirm={() =>
+                startDelete(async () => {
+                  const res = await deleteComicAction();
+                  if (res?.error) toast.error(res.error);
+                })
+              }
             />
           </Panel>
         )}
@@ -271,3 +375,12 @@ export function ComicForm({
   );
 }
 
+/** A band colour, with its swatch. */
+function BandOption({ band }: { band: CoverBand }) {
+  return (
+    <span className="flex items-center gap-2">
+      <span className="size-3.5 rounded-sm ring-1 ring-foreground/15" style={{ backgroundColor: COVER_BAND[band].hex }} />
+      {COVER_BAND[band].label}
+    </span>
+  );
+}

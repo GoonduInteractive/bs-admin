@@ -2,7 +2,9 @@
 
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
+import { failureMessage } from "@/lib/api/client";
 import {
+  UNLINKED,
   deleteComic,
   deleteVolume,
   getComic,
@@ -14,7 +16,7 @@ import {
   saveProduct,
   saveVolume,
 } from "@/lib/api/merch";
-import { chapterName, volumeCompleteness } from "@/lib/comics";
+import { chapterName } from "@/lib/comics";
 import {
   chapterPricingSchema,
   comicSchema,
@@ -33,20 +35,6 @@ function slugify(s: string) {
 function refresh() {
   revalidatePath("/comics");
   revalidatePath("/products");
-}
-
-/**
- * A chapter's store listing is named after it and its volume. When either
- * is renamed or renumbered, the listing follows, so the two never disagree.
- */
-async function syncListings(chapters: Comic[], volume: ComicVolume) {
-  const ids = new Set(chapters.map((c) => c.id));
-  for (const p of await getProducts()) {
-    if (p.type !== "comics" || !ids.has(p.comicId)) continue;
-    const c = chapters.find((x) => x.id === p.comicId)!;
-    const name = chapterName(c, volume);
-    await saveProduct({ ...p, name, slug: slugify(name), image: c.cover });
-  }
 }
 
 /* ---- Chapters ---------------------------------------------------------- */
@@ -80,7 +68,27 @@ export async function saveComicAction(id: string | null, input: ComicInput, pric
   if (v.status !== "draft" && !price?.data && !isPriced(record)) {
     return { error: "Add a price before this chapter can be scheduled or published" };
   }
+  // A listing whose product couldn't be found can't be changed from here.
+  if (price?.data && record?.id.startsWith(UNLINKED)) {
+    return { error: "This chapter's store product couldn't be found. Reload Comics and try again, or change its prices under Products." };
+  }
 
+  try {
+    return await saveChapter(id, existing, volume, record, v, price?.data);
+  } catch (e) {
+    return { error: failureMessage(e, "Couldn't save the chapter") };
+  }
+}
+
+/** Saves the chapter, then its price if one was given; redirects to it when it lands. */
+async function saveChapter(
+  id: string | null,
+  existing: Comic | null,
+  volume: ComicVolume,
+  record: ComicProduct | undefined,
+  v: ComicInput,
+  pricing: ChapterPricingInput | undefined,
+) {
   const comic: Comic = {
     id: existing?.id ?? `cmc_${crypto.randomUUID().slice(0, 8)}`,
     slug: slugify(`${volume.title} ch ${v.chapter} ${v.title}`),
@@ -90,6 +98,10 @@ export async function saveComicAction(id: string | null, input: ComicInput, pric
     description: v.description,
     status: v.status,
     cover: v.cover,
+    coverStyle: v.coverStyle,
+    coverTitle: v.coverTitle,
+    coverVolume: v.coverVolume,
+    coverBand: v.coverBand,
     pages: v.pages.map((p, i) => ({ id: p.id, src: p.src, number: i + 1 })),
     publishAt:
       v.status === "scheduled"
@@ -104,30 +116,13 @@ export async function saveComicAction(id: string | null, input: ComicInput, pric
     updatedAt: new Date().toISOString(),
   };
 
-  await saveComic(comic);
-  if (price?.data) {
-    await savePricing(comic, volume, record, price.data);
-  } else if (v.status === "draft" && record?.status === "active") {
-    // Back in draft, it has no release to sell from: off sale until it's released again.
-    await saveProduct({ ...record, status: "draft" });
+  // A new chapter gets its id from the API: everything after this uses the saved one.
+  const saved = await saveComic(comic);
+  if (pricing) {
+    await savePricing(saved, volume, record, pricing);
   }
-  await syncListings([comic], volume);
-  await pauseIfIncomplete(volume);
   refresh();
-  redirect(`/comics/${comic.id}`);
-}
-
-/**
- * A printed volume is sold only while every chapter is out. When a chapter
- * save leaves its volume incomplete - a new chapter, or one back in draft - the
- * printed volume comes off sale, with the reason shown on the volume's page.
- */
-async function pauseIfIncomplete(volume: ComicVolume) {
-  if (!volume.edition?.enabled) return;
-  const done = volumeCompleteness(volume.id, await getComics());
-  if (done.complete) return;
-  const why = done.waiting ? `Chapter ${done.waiting.chapter}: ${done.waiting.title} isn't published` : "The volume has no chapters";
-  await saveVolume({ ...volume, edition: { ...volume.edition, enabled: false, pausedReason: why } });
+  redirect(`/comics/${saved.id}`);
 }
 
 /** The price prompt's answer, on the chapter's store record: created if new, on sale from release. */
@@ -160,11 +155,15 @@ async function savePricing(comic: Comic, volume: ComicVolume, record: ComicProdu
       },
     },
   };
-  await saveProduct(product);
+  await saveProduct(product, !record);
 }
 
-export async function deleteComicAction(id: string) {
-  await deleteComic(id);
+export async function deleteComicAction() {
+  try {
+    await deleteComic();
+  } catch (e) {
+    return { error: failureMessage(e, "Couldn't delete the chapter") };
+  }
   refresh();
   redirect("/comics");
 }
@@ -176,22 +175,18 @@ export async function saveVolumeAction(id: string | null, input: VolumeInput) {
   if (!parsed.success) return { error: parsed.error.issues[0]?.message ?? "Check the form" };
   const v = parsed.data;
 
+  try {
+    return await saveVolumeFromForm(id, v);
+  } catch (e) {
+    return { error: failureMessage(e, "Couldn't save the volume") };
+  }
+}
+
+/** Saves the volume; redirects to it on the Comics page when it lands. */
+async function saveVolumeFromForm(id: string | null, v: VolumeInput) {
   const volumes = await getVolumes();
   const clash = volumes.find((x) => x.number === v.number && x.id !== id);
   if (clash) return { error: `Volume ${v.number} already exists: ${clash.title}` };
-
-  // The printed volume goes on sale only once every chapter is published.
-  const before = id ? volumes.find((x) => x.id === id) : undefined;
-  if (v.editionEnabled) {
-    const done = volumeCompleteness(id ?? "", await getComics());
-    if (!done.complete) {
-      return {
-        error: done.total
-          ? `Only ${done.published} of ${done.total} chapters are published. The printed volume can go on sale once every chapter is out.`
-          : "Add and publish this volume's chapters before selling it in print.",
-      };
-    }
-  }
 
   const volume: ComicVolume = {
     id: id ?? `vol_${crypto.randomUUID().slice(0, 8)}`,
@@ -199,23 +194,12 @@ export async function saveVolumeAction(id: string | null, input: VolumeInput) {
     title: v.title,
     description: v.description,
     cover: v.cover || undefined,
-    // Kept when switched off, so its price and sales survive; a blank price keeps the old one.
-    edition:
-      v.editionEnabled || before?.edition
-        ? {
-            enabled: v.editionEnabled,
-            price: v.editionPrice ? Number(v.editionPrice) : (before?.edition?.price ?? 0),
-            stock: v.editionStock,
-            unitsSold: before?.edition?.unitsSold ?? 0,
-          }
-        : undefined,
     updatedAt: new Date().toISOString(),
   };
 
-  await saveVolume(volume);
-  if (id) await syncListings((await getComics()).filter((c) => c.volumeId === id), volume);
+  const saved = await saveVolume(volume);
   refresh();
-  redirect(`/comics#vol-${volume.number}`);
+  redirect(`/comics#vol-${saved.number}`);
 }
 
 /** Only an empty volume can go: its chapters must be moved or deleted first. */
@@ -224,7 +208,11 @@ export async function deleteVolumeAction(id: string) {
   if (chapters.length) {
     return { error: `Move or delete its ${chapters.length} chapter${chapters.length === 1 ? "" : "s"} first` };
   }
-  await deleteVolume(id);
+  try {
+    await deleteVolume();
+  } catch (e) {
+    return { error: failureMessage(e, "Couldn't delete the volume") };
+  }
   refresh();
   redirect("/comics");
 }
