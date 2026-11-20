@@ -26,7 +26,8 @@ import type {
 
 export type Tone = "neutral" | "success" | "warning" | "danger" | "info" | "brand";
 
-type Labelled = { label: string; tone: Tone };
+/** `hint` explains the label on hover, for one a word alone could mislead. */
+type Labelled = { label: string; tone: Tone; hint?: string };
 
 export const ORDER_STATUS: Record<OrderStatus, Labelled> = {
   awaitingPayment: { label: "Awaiting payment", tone: "neutral" },
@@ -138,13 +139,58 @@ export const PLAYER_STATUS: Record<PlayerStatus, Labelled> = {
   active: { label: "Active", tone: "success" },
   suspended: { label: "Suspended", tone: "danger" },
   unverified: { label: "Unverified", tone: "warning" },
+  unknown: { label: "Unknown", tone: "neutral", hint: "The server didn't say whether this player has confirmed their email." },
 };
 
 export const NOTE_STATUS: Record<NoteStatus, Labelled> = {
-  pending: { label: "Waiting for review", tone: "warning" },
+  pending: { label: "Live, being checked", tone: "info", hint: "On the wall and queued for the automatic check." },
+  flagged: { label: "Flagged", tone: "warning", hint: "The automatic check took it off the wall. Restore it or take it down." },
   approved: { label: "On the wall", tone: "success" },
-  rejected: { label: "Rejected", tone: "danger" },
+  rejected: { label: "Taken down", tone: "danger" },
 };
+
+/**
+ * The community rules, as the player is told which one a note broke: the
+ * filter guide's `rule_label` table (2026-11-17), capitalised as the API's
+ * own example ("Advertising"). Keyed by the filter list's rule keys, so a
+ * flagged note's matches name their rule; `profanity_*` and the contact keys
+ * share one label each, as the guide groups them. The take-down picker offers
+ * the labels in the guide's priority order - all but self-harm: the guide
+ * says that player is NOT emailed, and the team reaches out personally, so an
+ * urgent note is taken down with no rule at all (`rule_category` is optional).
+ * FLAGGED to the backend: a reject without a rule must send no email.
+ */
+export const NOTE_RULES: { key: string; label: string }[] = [
+  { key: "self_harm", label: "Self-harm" },
+  { key: "underage", label: "Account eligibility" },
+  { key: "personal_info", label: "Sharing personal information" },
+  { key: "violence_threats", label: "Threats" },
+  { key: "hate_slurs", label: "Hate speech" },
+  { key: "sexual_content", label: "Sexual content" },
+  { key: "scam_fraud", label: "Scams and cheats" },
+  { key: "impersonation", label: "Pretending to be staff" },
+  { key: "drugs", label: "Drugs" },
+  { key: "gambling_betting", label: "Betting" },
+  { key: "contact", label: "Sharing links and contact details" },
+  { key: "profanity", label: "Strong language" },
+  { key: "political", label: "Politics" },
+  { key: "religious", label: "Religion" },
+  { key: "marketing_spam", label: "Advertising" },
+  { key: "competitor_brands", label: "Other games" },
+];
+
+/** A list key as the filter writes it (`profanity_igbo`, `url_and_number_patterns`) to its rule. */
+export function noteRuleKey(key: string): string {
+  if (key.startsWith("profanity_")) return "profanity";
+  if (key === "contact_solicitation" || key === "url_and_number_patterns") return "contact";
+  return key;
+}
+
+/** The label for a rule key; an unknown one reads as it came. */
+export function noteRuleLabel(key: string): string {
+  const rule = noteRuleKey(key);
+  return NOTE_RULES.find((r) => r.key === rule)?.label ?? key.replace(/_/g, " ");
+}
 
 export const CHAMPION: Record<Champion, string> = {
   soma: "Soma",

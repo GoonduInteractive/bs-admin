@@ -29,7 +29,7 @@ async function getNotices(): Promise<{ notices: Notice[]; pendingOrders: number;
     orNone(getOrders(), []),
     orNone(getProductRows(), []),
     orNone(getTournaments(), []),
-    orNone(getNoteStats(), { pending: 0, approved: 0, rejected: 0, postedThisWeek: 0 }),
+    orNone(getNoteStats(), { flagged: 0, urgent: 0, pendingCheck: 0, onWall: 0, rejected: 0, postedThisWeek: 0 }),
   ]);
 
   const pendingOrders = orders.filter((o) => o.status === "pending").length;
@@ -56,16 +56,26 @@ async function getNotices(): Promise<{ notices: Notice[]; pendingOrders: number;
       tone: "info",
     });
   }
-  if (noteStats.pending > 0) {
+  // Notes go up at once now; what needs a human is what the automatic check flagged. Self-harm first.
+  if (noteStats.urgent > 0) {
     notices.push({
-      id: "notes-pending",
-      title: `${noteStats.pending} ${noteStats.pending === 1 ? "note is" : "notes are"} waiting for review`,
-      body: "Approve them onto the Community Wall, or reject them.",
+      id: "notes-urgent",
+      title: `${noteStats.urgent} urgent self-harm ${noteStats.urgent === 1 ? "flag" : "flags"}`,
+      body: "Reach out to the player personally. Open Notes to see who.",
+      href: "/notes",
+      tone: "danger",
+    });
+  }
+  if (noteStats.flagged > 0) {
+    notices.push({
+      id: "notes-flagged",
+      title: `${noteStats.flagged} ${noteStats.flagged === 1 ? "note" : "notes"} flagged for review`,
+      body: "The automatic check took them off the Community Wall. Restore them or take them down.",
       href: "/notes",
       tone: "warning",
     });
   }
-  return { notices, pendingOrders, pendingNotes: noteStats.pending };
+  return { notices, pendingOrders, pendingNotes: noteStats.flagged };
 }
 
 export default async function DashboardLayout({ children }: { children: React.ReactNode }) {

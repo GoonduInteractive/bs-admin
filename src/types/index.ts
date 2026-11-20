@@ -35,7 +35,12 @@ export type Region = {
   createdAt: string;
   /** How many players are in it (since 2026-11-02). */
   playerCount?: number;
+  /** Its pin on the website's active-player map, when the API says. */
+  pin?: RegionPin;
 };
+
+/** A point on the map, in decimal degrees. */
+export type RegionPin = { lat: number; lng: number };
 
 export type Paginated<T> = {
   items: T[];
@@ -383,11 +388,15 @@ export type Transaction = {
 /* ------------------------------------------------------------------ */
 
 /**
- * Where a note is in moderation. The API's own `moderation_status`: a note a
- * player posts is `pending`, and only `approved` ones are on the public
- * Community Wall.
+ * Where a note is in moderation, the API's own `moderation_status` (since the
+ * filter update of 2026-11-19). A note goes up at once: `pending` is live and
+ * still queued for the automatic check; `flagged` failed it and is off the
+ * wall until an admin restores it (`approved`) or takes it down (`rejected`).
  */
-export type NoteStatus = "pending" | "approved" | "rejected";
+export type NoteStatus = "pending" | "flagged" | "approved" | "rejected";
+
+/** One thing the automatic check found: the rule (the filter list's key) and the entry it matched. */
+export type NoteMatch = { rule: string; entry: string };
 
 /** A note a player posted to the Community Wall. */
 export type Note = {
@@ -399,12 +408,57 @@ export type Note = {
   status: NoteStatus;
   likes: number;
   postedAt: string;
-  /** The admin who approved or rejected it, and when. Absent while pending. */
+  /** The admin who restored or took it down, and when. */
   moderatedBy?: string;
   moderatedAt?: string;
+  /** When the automatic check took it off the wall, and what it found. */
+  flaggedAt?: string;
+  matches: NoteMatch[];
+  /** The rule list's version it was checked against. */
+  rulesVersion?: string;
+  /** Restored by an admin, so the automatic check leaves it alone. */
+  exempt: boolean;
+  /** A self-harm match: the top of the queue, and the team reaches out personally. */
+  urgent: boolean;
+  /**
+   * The API's `flag_source`. Despite its name the API also sets it on a note
+   * the automatic check PASSED (seen 2026-11-20: on the wall, `auto_check`), so
+   * it reads as "what took it down" only for a note that came off the wall.
+   */
+  source?: "auto_check" | "client_report" | "manual";
+  /** When the automatic check ran. */
+  checkedAt?: string;
+  /** How many of this player's notes have been flagged or taken down, the API's count. */
+  pastFlags?: number;
 };
 
-export type NoteStats = { pending: number; approved: number; rejected: number; postedThisWeek: number };
+/**
+ * A note the website refused to post and reported (self-harm, underage): it
+ * never reached the wall, so it isn't a note to restore - the team follows up.
+ */
+export type ModerationReport = {
+  id: string;
+  body: string;
+  /** The rule keys the website matched (`self_harm`, `underage`). */
+  rules: string[];
+  author: { handle: string | null; name: string };
+  status: "open" | "reviewed" | "dismissed";
+  reportedAt: string;
+  urgent: boolean;
+};
+
+export type NoteStats = {
+  /** Flagged by the automatic check, waiting for an admin. */
+  flagged: number;
+  /** Self-harm flags needing a personal follow-up. */
+  urgent: number;
+  /** Live, still queued for the automatic check. */
+  pendingCheck: number;
+  /** Public: approved, plus live ones not yet checked. */
+  onWall: number;
+  rejected: number;
+  postedThisWeek: number;
+};
 
 /* ------------------------------------------------------------------ */
 /* Tournaments                                                         */
@@ -522,7 +576,8 @@ export type Tournament = {
 /* Players                                                             */
 /* ------------------------------------------------------------------ */
 
-export type PlayerStatus = "active" | "suspended" | "unverified";
+/** `unknown`: the API's record didn't say whether the email is confirmed. */
+export type PlayerStatus = "active" | "suspended" | "unverified" | "unknown";
 export type Champion = "soma" | "kaira" | "ogbunabali";
 
 /**
@@ -545,6 +600,35 @@ export type Player = {
   lastActiveAt?: string;
   tournamentsPlayed?: number;
   totalSpend?: number;
+};
+
+/** One movement of a player's Seeds. */
+export type SeedsEntry = {
+  id: string;
+  /** Always positive; `direction` says which way. */
+  amount: number;
+  direction: "credit" | "debit";
+  /** As the API words them: what kind of movement, where it came from, where it stands. */
+  kind: string;
+  source: string;
+  status: string;
+  /** When held Seeds become spendable. */
+  availableAt?: string;
+  /** The match, chapter or order it came from. */
+  reference?: string;
+  createdAt: string;
+};
+
+/** A player's Seeds, in the game's own words, and the latest entries. */
+export type SeedsLedger = {
+  /** What they can spend now. Redeeming takes Seeds out of it. */
+  calabash: number;
+  /** Earned but on hold, not spendable yet. */
+  pending: number;
+  /** Every Seed they've ever earned. Spending never lowers it. */
+  legacy: number;
+  /** Newest first. */
+  entries: SeedsEntry[];
 };
 
 /** The headline counts on Players. */

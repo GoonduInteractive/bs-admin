@@ -22,6 +22,7 @@ import { CHAMPION, PLAYER_STATUS } from "@/lib/labels";
 import { isRegion, regionName, regionNames } from "@/lib/regions";
 import type { Player, Region, RegionId } from "@/types";
 import { setPlayerStatusAction } from "./actions";
+import { PlayerSeeds, Stat } from "./player-seeds";
 
 /**
  * Suspend and reinstate. Suspending asks for the player's handle, typed out,
@@ -91,15 +92,6 @@ function RowMenu({ p, onView }: { p: Player; onView: () => void }) {
   );
 }
 
-function Stat({ label, value }: { label: string; value: React.ReactNode }) {
-  return (
-    <div className="rounded-lg bg-paper p-3">
-      <p className="text-xs text-muted-foreground">{label}</p>
-      <p className="mt-0.5 font-semibold">{value}</p>
-    </div>
-  );
-}
-
 function PlayerSheet({ player, names, onClose }: { player: Player | null; names: Record<RegionId, string>; onClose: () => void }) {
   return (
     <Sheet open={!!player} onOpenChange={(o) => !o && onClose()}>
@@ -108,7 +100,7 @@ function PlayerSheet({ player, names, onClose }: { player: Player | null; names:
   );
 }
 
-/** Only what's known: the API's player record has no stats, spend, email or region yet. */
+/** Only what's known: the API's player record has no stats, spend, email or region yet. Their Seeds come from their ledger. */
 function PlayerDetail({ p, names }: { p: Player; names: Record<RegionId, string> }) {
   const { pending, suspended, toggle, dialog } = useSuspend(p);
   const stats = (
@@ -160,6 +152,7 @@ function PlayerDetail({ p, names }: { p: Player; names: Record<RegionId, string>
             </div>
           ))}
         </dl>
+        <PlayerSeeds key={p.id} playerId={p.id} handle={p.handle} />
         <div className="grid grid-cols-2 gap-2">
           <Button variant="outline" size="xl" render={<Link href={`/orders?q=${encodeURIComponent(p.name)}`} />}>
             View orders

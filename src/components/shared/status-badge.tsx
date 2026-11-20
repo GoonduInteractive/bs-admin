@@ -14,10 +14,12 @@ const TONE: Record<Tone, { pill: string; dot: string }> = {
  * A status pill. Colour never carries the meaning alone - the label is always
  * printed, and the dot is decoration.
  */
-export function StatusBadge({ label, tone, className }: { label: string; tone: Tone; className?: string }) {
+export function StatusBadge({ label, tone, hint, className }: { label: string; tone: Tone; hint?: string; className?: string }) {
   const t = TONE[tone];
   return (
     <span
+      // `hint`: what the label means, on hover, where a word alone could be read wrongly.
+      title={hint}
       className={cn(
         "inline-flex h-6 items-center gap-1.5 rounded-full px-2.5 text-xs font-medium whitespace-nowrap",
         t.pill,

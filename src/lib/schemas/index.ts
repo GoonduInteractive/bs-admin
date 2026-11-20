@@ -277,10 +277,24 @@ export type FreeShippingInput = z.infer<typeof freeShippingSchema>;
 
 /* ---- Regions ----------------------------------------------------------- */
 
-/** Add or rename a region. Unique names are checked on save, against the list. */
-export const regionSchema = z.object({
-  name: z.string().trim().min(2, "Give the region a name").max(40, "Keep region names under 40 characters"),
-});
+/** A map coordinate as typed: empty, or decimal degrees within `limit`. */
+const coordinate = (label: string, limit: number) =>
+  z
+    .string()
+    .trim()
+    .refine((v) => v === "" || (Number.isFinite(Number(v)) && Math.abs(Number(v)) <= limit), `${label} is a number from -${limit} to ${limit}`);
+
+/**
+ * Add or edit a region. Unique names are checked on save, against the list.
+ * `lat` and `lng` are its pin on the website's active-player map, both or neither.
+ */
+export const regionSchema = z
+  .object({
+    name: z.string().trim().min(2, "Give the region a name").max(40, "Keep region names under 40 characters"),
+    lat: coordinate("Latitude", 90),
+    lng: coordinate("Longitude", 180),
+  })
+  .refine((r) => (r.lat === "") === (r.lng === ""), { message: "Give both latitude and longitude, or neither", path: ["lng"] });
 export type RegionInput = z.infer<typeof regionSchema>;
 
 /* ---- Tournaments ------------------------------------------------------- */

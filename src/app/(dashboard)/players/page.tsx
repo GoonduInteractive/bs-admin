@@ -9,7 +9,7 @@ export const metadata: Metadata = { title: "Players" };
 
 export default async function PlayersPage({ searchParams }: PageProps<"/players">) {
   const { q } = await searchParams;
-  const [players, stats, regions] = await Promise.all([getPlayers(), getPlayerStats(), getRegions()]);
+  const [players, stats, regions] = await Promise.all([getPlayers({ withStatus: true }), getPlayerStats(), getRegions()]);
   const activeShare = stats.total ? Math.round((stats.activeThisWeek / stats.total) * 100) : 0;
 
   return (

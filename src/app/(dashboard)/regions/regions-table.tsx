@@ -1,6 +1,6 @@
 "use client";
 
-import { MapPin, MoreHorizontal, Plus } from "lucide-react";
+import { LocateFixed, MapPin, MoreHorizontal, Plus } from "lucide-react";
 import { useState, useTransition } from "react";
 import { toast } from "sonner";
 import { ConfirmDialog } from "@/components/shared/confirm-dialog";
@@ -15,12 +15,13 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { Field, FieldDescription, FieldError, FieldLabel } from "@/components/ui/field";
+import { Field, FieldDescription, FieldError, FieldLabel, FieldLegend, FieldSet } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { formatCount, formatDate } from "@/lib/format";
 import type { Tone } from "@/lib/labels";
+import { cn } from "@/lib/utils";
 import type { Region } from "@/types";
-import { deleteRegionAction, saveRegionAction, setRegionStatusAction } from "./actions";
+import { deleteRegionAction, findRegionPinAction, saveRegionAction, setRegionStatusAction } from "./actions";
 
 /** A region with how many players and tournaments use it. `players` is null while the API doesn't say who is where. */
 export type RegionRow = Region & { players: number | null; tournaments: number };
@@ -30,21 +31,66 @@ const STATUS: Record<Region["status"], { label: string; tone: Tone }> = {
   archived: { label: "Archived", tone: "neutral" },
 };
 
-/** Add a region, or rename one. One dialog for both; `region` present means renaming. */
+/** A coordinate as the form shows it: as stored, or blank. */
+const typed = (n: number | undefined) => (n === undefined ? "" : String(n));
+
+/** Add a region, or edit one. One dialog for both; `region` present means editing. */
 function RegionDialog({ open, onOpenChange, region }: { open: boolean; onOpenChange: (o: boolean) => void; region?: RegionRow }) {
   const [name, setName] = useState(region?.name ?? "");
+  const [lat, setLat] = useState(typed(region?.pin?.lat));
+  const [lng, setLng] = useState(typed(region?.pin?.lng));
   const [error, setError] = useState<string | null>(null);
   const [pending, start] = useTransition();
+
+  // The pin from the name (`findRegionPinAction`). Leaving the name looks it up and fills the
+  // fields only when they're empty or still hold an earlier lookup's numbers, never over numbers
+  // typed by hand; Find pin is the admin asking, so it replaces them.
+  const [found, setFound] = useState<{ text: string; ok: boolean } | null>(null);
+  const [autoFilled, setAutoFilled] = useState(false);
+  const [lookedUp, setLookedUp] = useState<string | null>(null);
+  const [looking, startLookup] = useTransition();
+
+  function lookup(asked: boolean) {
+    const query = name.trim();
+    if (query.length < 2) return;
+    if (!asked && (query === lookedUp || ((lat || lng) && !autoFilled))) return;
+    setLookedUp(query);
+    startLookup(async () => {
+      const res = await findRegionPinAction(query);
+      if ("pin" in res) {
+        setLat(String(res.pin.lat));
+        setLng(String(res.pin.lng));
+        setAutoFilled(true);
+        setError(null);
+        setFound({ ok: true, text: `Found: ${res.pin.label} · © OpenStreetMap contributors` });
+      } else if ("notFound" in res) {
+        setFound({ ok: false, text: `Nothing called "${query}" was found. Type the coordinates.` });
+      } else {
+        setFound({ ok: false, text: res.error });
+      }
+    });
+  }
 
   function submit(e: React.FormEvent) {
     e.preventDefault();
     start(async () => {
-      const res = await saveRegionAction(region?.id ?? null, { name });
+      const res = await saveRegionAction(region?.id ?? null, { name, lat, lng });
       if ("error" in res) return setError(res.error ?? "Check the name");
-      toast.success(region ? `Renamed to ${res.region.name}` : `${res.region.name} added`);
+      toast.success(region ? `${res.region.name} saved` : `${res.region.name} added`);
       onOpenChange(false);
     });
   }
+
+  const edit = (set: (v: string) => void) => (e: React.ChangeEvent<HTMLInputElement>) => {
+    set(e.target.value);
+    setError(null);
+  };
+  // A number typed by hand is the admin's: no later lookup on leaving the name replaces it.
+  const editPin = (set: (v: string) => void) => (e: React.ChangeEvent<HTMLInputElement>) => {
+    edit(set)(e);
+    setAutoFilled(false);
+    setFound(null);
+  };
 
   return (
     <Dialog
@@ -53,14 +99,19 @@ function RegionDialog({ open, onOpenChange, region }: { open: boolean; onOpenCha
         onOpenChange(o);
         if (o) {
           setName(region?.name ?? "");
+          setLat(typed(region?.pin?.lat));
+          setLng(typed(region?.pin?.lng));
           setError(null);
+          setFound(null);
+          setAutoFilled(false);
+          setLookedUp(null);
         }
       }}
     >
       <DialogContent>
         <form onSubmit={submit} noValidate className="flex flex-col gap-5">
           <DialogHeader>
-            <DialogTitle>{region ? `Rename ${region.name}` : "Add a region"}</DialogTitle>
+            <DialogTitle>{region ? `Edit ${region.name}` : "Add a region"}</DialogTitle>
             <DialogDescription>
               {region
                 ? region.players === null
@@ -69,7 +120,7 @@ function RegionDialog({ open, onOpenChange, region }: { open: boolean; onOpenCha
                 : "New regions are offered to players at registration straight away."}
             </DialogDescription>
           </DialogHeader>
-          <Field data-invalid={!!error}>
+          <Field>
             <FieldLabel htmlFor="region-name">Name</FieldLabel>
             <Input
               id="region-name"
@@ -78,21 +129,58 @@ function RegionDialog({ open, onOpenChange, region }: { open: boolean; onOpenCha
               value={name}
               placeholder="Kano"
               className="h-10"
-              aria-invalid={!!error}
               onChange={(e) => {
-                setName(e.target.value);
-                setError(null);
+                edit(setName)(e);
+                setFound(null);
               }}
+              onBlur={() => lookup(false)}
             />
-            <FieldDescription>As players will see it, e.g. a state, city or country.</FieldDescription>
-            {error && <FieldError>{error}</FieldError>}
+            <FieldDescription>As players will see it, e.g. a state, city or country. The map pin fills in from it.</FieldDescription>
           </Field>
+          <FieldSet>
+            <FieldLegend variant="label">Map pin</FieldLegend>
+            <div className="grid grid-cols-2 items-end gap-3 sm:grid-cols-[1fr_1fr_auto]">
+              <Field>
+                <FieldLabel htmlFor="region-lat" className="font-normal text-muted-foreground">
+                  Latitude
+                </FieldLabel>
+                <Input id="region-lat" inputMode="decimal" value={lat} placeholder="12.0022" className="h-10 tabular" onChange={editPin(setLat)} />
+              </Field>
+              <Field>
+                <FieldLabel htmlFor="region-lng" className="font-normal text-muted-foreground">
+                  Longitude
+                </FieldLabel>
+                <Input id="region-lng" inputMode="decimal" value={lng} placeholder="8.5920" className="h-10 tabular" onChange={editPin(setLng)} />
+              </Field>
+              <Button
+                type="button"
+                variant="outline"
+                className="col-span-2 h-10 sm:col-span-1"
+                disabled={looking || name.trim().length < 2}
+                aria-busy={looking || undefined}
+                onClick={() => lookup(true)}
+              >
+                <LocateFixed />
+                {looking ? "Finding…" : "Find pin"}
+              </Button>
+            </div>
+            {found && (
+              <p role="status" className={cn("text-xs leading-snug", found.ok ? "text-moss" : "text-muted-foreground")}>
+                {found.text}
+              </p>
+            )}
+            <FieldDescription>
+              Where its active players show on the website&apos;s player map, in decimal degrees.{" "}
+              {region && !region.pin ? "Leave both empty to keep the pin it has." : "Leave both empty for no pin."}
+            </FieldDescription>
+          </FieldSet>
+          {error && <FieldError>{error}</FieldError>}
           <DialogFooter>
             <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
               Cancel
             </Button>
             <Button type="submit" disabled={pending}>
-              {region ? "Save name" : "Add region"}
+              {region ? "Save" : "Add region"}
             </Button>
           </DialogFooter>
         </form>
@@ -133,7 +221,7 @@ function RowMenu({ row }: { row: RegionRow }) {
           <MoreHorizontal />
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end" className="w-52">
-          <DropdownMenuItem onClick={() => setRenaming(true)}>Rename</DropdownMenuItem>
+          <DropdownMenuItem onClick={() => setRenaming(true)}>Edit name and pin</DropdownMenuItem>
           <DropdownMenuItem
             onClick={() =>
               run(
@@ -182,6 +270,12 @@ const columns: Column<RegionRow>[] = [
     sortValue: (r) => r.tournaments,
     csv: (r) => r.tournaments,
   },
+  {
+    id: "pin",
+    header: "Map pin",
+    cell: (r) => <span className="text-muted-foreground tabular">{r.pin ? `${r.pin.lat}, ${r.pin.lng}` : "—"}</span>,
+    csv: (r) => (r.pin ? `${r.pin.lat}, ${r.pin.lng}` : ""),
+  },
   { id: "status", header: "Status", cell: (r) => <StatusBadge {...STATUS[r.status]} />, csv: (r) => STATUS[r.status].label },
   { id: "created", header: "Added", cell: (r) => <span className="text-muted-foreground">{formatDate(r.createdAt)}</span>, sortValue: (r) => r.createdAt, csv: (r) => r.createdAt },
   { id: "actions", header: <span className="sr-only">Actions</span>, cell: (r) => <RowMenu row={r} />, className: "w-12" },
@@ -210,7 +304,8 @@ export function RegionsTable({ rows }: { rows: RegionRow[] }) {
       <RegionDialog open={adding} onOpenChange={setAdding} />
       <DataTable
         rows={rows}
-        columns={columns}
+        // The pin column only once the API sends pins back: the spec doesn't list them on the region record.
+        columns={rows.some((r) => r.pin) ? columns : columns.filter((c) => c.id !== "pin")}
         getRowId={(r) => r.id}
         searchText={(r) => r.name}
         searchPlaceholder="Search regions…"

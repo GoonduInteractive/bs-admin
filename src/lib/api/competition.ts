@@ -10,6 +10,7 @@ import type {
   PlayerStats,
   Region,
   RegionId,
+  RegionPin,
   Stage,
   StageKey,
   Tournament,
@@ -410,9 +411,18 @@ const apiPlayer = z.object({
   main_character: z.string().nullish(),
 });
 
-function isVerified(v: boolean | string | null | undefined): boolean {
+/**
+ * Whether a record says the email is confirmed, and `undefined` when the record
+ * doesn't carry the field at all (the list omits it, seen 2026-11-17). Typed a
+ * string by the spec: "true", "1", "yes", "verified" or a confirmation date
+ * count as confirmed; null and anything else as not.
+ */
+function verified(v: boolean | string | null | undefined): boolean | undefined {
+  if (v === undefined) return undefined;
   if (typeof v === "boolean") return v;
-  return !!v && !["false", "0"].includes(v.toLowerCase());
+  if (v === null) return false;
+  const s = v.trim().toLowerCase();
+  return /^(true|1|yes|verified)$/.test(s) || (/^\d{4}-\d{2}-\d{2}/.test(s) && !Number.isNaN(Date.parse(s)));
 }
 
 /** "Ogbun'abali" or "ogbunabali" -> "ogbunabali". Anything not a known champion is left out. */
@@ -426,6 +436,7 @@ function toPlayer(p: z.output<typeof apiPlayer>): Player {
   const main = champion(p.main_character);
   // No username yet: their Gamer ID, else their email, so the row still says who it is.
   const handle = p.username || p.game_player_id || p.email || p.id;
+  const confirmed = verified(p.email_verified);
   return {
     id: p.id,
     handle,
@@ -433,14 +444,50 @@ function toPlayer(p: z.output<typeof apiPlayer>): Player {
     ...(p.email && { email: p.email }),
     ...(Number.isFinite(level) && { level }),
     ...(main && { main }),
-    status: p.suspended ? "suspended" : isVerified(p.email_verified) ? "active" : "unverified",
+    // A record that doesn't say isn't called unverified: that would be a claim the API never made.
+    status: p.suspended ? "suspended" : confirmed === undefined ? "unknown" : confirmed ? "active" : "unverified",
     joinedAt: p.created_at,
     ...(p.last_login_at && { lastActiveAt: p.last_login_at }),
   };
 }
 
-export async function getPlayers(): Promise<Player[]> {
-  return (await apiFetchAll("/v1/admin/players", apiPlayer)).map(toPlayer);
+/** How many players' own records the Players page reads when the list leaves their status out. */
+const DETAIL_LIMIT = 100;
+const DETAIL_AT_ONCE = 5;
+
+/**
+ * Fills what the list leaves out from each player's own record
+ * (`GET /v1/admin/players/{id}`, which the spec gives `email_verified` and
+ * `last_login_at`). The list omits both (seen 2026-11-17), so every row read
+ * Unverified. Only for records missing the field, the newest DETAIL_LIMIT,
+ * five at a time; a record that can't be read stays as the list had it. When
+ * the list carries the field, nothing extra is read. FLAGGED: asked of the
+ * backend to put `email_verified` and `last_login_at` on the list.
+ */
+async function withDetails(list: z.output<typeof apiPlayer>[]): Promise<z.output<typeof apiPlayer>[]> {
+  const missing = list.filter((p) => p.email_verified === undefined).slice(0, DETAIL_LIMIT);
+  const detail = new Map<string, z.output<typeof apiPlayer>>();
+  for (let i = 0; i < missing.length; i += DETAIL_AT_ONCE) {
+    const batch = missing.slice(i, i + DETAIL_AT_ONCE);
+    const read = await Promise.all(
+      batch.map((p) => apiFetch(`/v1/admin/players/${encodeURIComponent(p.id)}`, apiPlayer).catch(() => null)),
+    );
+    for (const d of read) if (d) detail.set(d.id, d);
+  }
+  return list.map((p) => {
+    const d = detail.get(p.id);
+    return d ? { ...p, ...Object.fromEntries(Object.entries(d).filter(([, v]) => v !== undefined)) } : p;
+  });
+}
+
+/**
+ * Every player. `withStatus` reads what the list leaves out (verification,
+ * last sign-in) from each player's record, for the Players page; the callers
+ * that only need ids, names or suspension skip that.
+ */
+export async function getPlayers({ withStatus = false }: { withStatus?: boolean } = {}): Promise<Player[]> {
+  const list = await apiFetchAll("/v1/admin/players", apiPlayer);
+  return (withStatus ? await withDetails(list) : list).map(toPlayer);
 }
 
 const apiPlayerStats = z.object({
@@ -475,11 +522,26 @@ const apiRegion = z.object({
   created_at: z.string(),
   deleted: z.boolean().optional(),
   player_count: z.coerce.number().nullish(),
+  // Its pin on the website's active-player map (on the record since the spec of 2026-11-19;
+  // set on create and on rename). Null until an admin places it.
+  map_lat: z.coerce.number().nullish(),
+  map_lng: z.coerce.number().nullish(),
 });
 
 function toRegion(r: z.output<typeof apiRegion>): Region {
-  return { id: r.id, slug: r.slug, name: r.name, status: r.status, createdAt: r.created_at, ...(r.player_count != null && { playerCount: r.player_count }) };
+  return {
+    id: r.id,
+    slug: r.slug,
+    name: r.name,
+    status: r.status,
+    createdAt: r.created_at,
+    ...(r.player_count != null && { playerCount: r.player_count }),
+    ...(r.map_lat != null && r.map_lng != null && { pin: { lat: r.map_lat, lng: r.map_lng } }),
+  };
 }
+
+/** The pin as the API takes it, or nothing to leave the pin as it is. */
+const pinFields = (pin: RegionPin | null) => (pin ? { map_lat: pin.lat, map_lng: pin.lng } : {});
 
 /**
  * Every region, active first, then by name. The API keeps Global as a region;
@@ -497,12 +559,26 @@ export async function getPlayersPlaced(): Promise<number> {
   return (await apiFetch("/v1/admin/regions/stats", z.object({ players_in_regions: z.number() }))).players_in_regions;
 }
 
-export async function createRegion(name: string): Promise<Region> {
-  return toRegion(await apiFetch("/v1/admin/regions", apiRegion, { method: "POST", query: { name } }));
+/**
+ * Adds a region with its pin in one call: `name`, `map_lat` and `map_lng` in
+ * the query string, as the spec has it. The backend fixed the add to take the
+ * pin the way the edit does (2026-11-19); before that it answered 500 and the
+ * pin went on with a second call.
+ */
+export async function createRegion(name: string, pin: RegionPin | null): Promise<Region> {
+  return toRegion(
+    await apiFetch("/v1/admin/regions", apiRegion, {
+      method: "POST",
+      query: { name, ...(pin && { map_lat: pin.lat, map_lng: pin.lng }) },
+    }),
+  );
 }
 
-export async function renameRegion(id: string, name: string): Promise<Region> {
-  return toRegion(await apiFetch(`/v1/admin/regions/${encodeURIComponent(id)}/rename`, apiRegion, { method: "PATCH", body: { name } }));
+/** Rename, and move its pin when one is given. Without one the pin stays where it is. */
+export async function renameRegion(id: string, name: string, pin: RegionPin | null): Promise<Region> {
+  return toRegion(
+    await apiFetch(`/v1/admin/regions/${encodeURIComponent(id)}/rename`, apiRegion, { method: "PATCH", body: { name, ...pinFields(pin) } }),
+  );
 }
 
 /** Archive or restore. The API only toggles, so a region already in `status` is left alone. */
