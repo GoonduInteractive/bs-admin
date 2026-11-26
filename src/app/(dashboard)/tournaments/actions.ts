@@ -14,10 +14,12 @@ import {
   setTournamentStatus,
 } from "@/lib/api/competition";
 import { failureMessage } from "@/lib/api/client";
+import { saveTournamentPrize } from "@/lib/api/hedera";
+import { HEDERA_ON } from "@/lib/hedera/mode";
 import { fromLagosInput } from "@/lib/lagos-time";
 import { tournamentSchema, type TournamentInput } from "@/lib/schemas";
 import { GLOBAL_REGION } from "@/lib/regions";
-import { newStages } from "@/lib/tournaments";
+import { hbarAmounts, newStages } from "@/lib/tournaments";
 import type { Tournament } from "@/types";
 
 function slugify(s: string) {
@@ -36,6 +38,8 @@ export async function saveTournamentAction(slug: string | null, input: Tournamen
   const parsed = tournamentSchema.safeParse(input);
   if (!parsed.success) return { error: parsed.error.issues[0]?.message ?? "Check the form" };
   const v = parsed.data;
+  // Off, the form has no prize-type fields and every tournament pays cash, as before.
+  const prizeType = HEDERA_ON ? v.prizeType : "cash";
 
   const existing = slug ? await getTournament(slug) : null;
   const all = await getTournaments();
@@ -65,7 +69,8 @@ export async function saveTournamentAction(slug: string | null, input: Tournamen
     startsAt: at(v.startsAt),
     endsAt: at(v.endsAt),
     registrationClosesAt: at(v.registrationClosesAt),
-    prizePool: v.prizePool,
+    // HBAR only: no cash prize. The split divides the HBAR pool instead.
+    prizePool: prizeType === "hbar" ? 0 : v.prizePool,
     prizeSplit: v.prizeSplit.map((p) => p.share),
     slots: { taken: existing?.slots.taken ?? 0, total: v.unlimitedSlots ? null : v.slots },
     inGameRewards: v.inGameRewards,
@@ -90,6 +95,17 @@ export async function saveTournamentAction(slug: string | null, input: Tournamen
     saved = await saveTournament(tournament, !existing);
   } catch (e) {
     return { error: failureMessage(e, "Could not save the tournament") };
+  }
+  // The prize type, HBAR pool and HBAR per place (the pool divided by the split) live on the Hedera
+  // mock until the tournament endpoints take them (`prize_type`, `hbar_pool`, `hbar_prizes`); keyed by
+  // the API's id, which a new tournament only has now.
+  if (HEDERA_ON) {
+    try {
+      const split = v.prizeSplit.map((p) => p.share);
+      await saveTournamentPrize(saved.id, prizeType === "cash" ? { type: "cash", hbarPool: 0, hbar: [] } : { type: prizeType, hbarPool: v.hbarPool, hbar: hbarAmounts(v.hbarPool, split) });
+    } catch (e) {
+      return { error: failureMessage(e, "The tournament saved, but its HBAR prizes didn't") };
+    }
   }
   refresh(saved.slug);
   redirect(`/tournaments/${saved.slug}`);

@@ -44,6 +44,14 @@ export function prizeAmounts(pool: number, split: readonly number[]): number[] {
   return amounts;
 }
 
+/**
+ * The HBAR pool divided by the prize split, to the hundredth of an HBAR,
+ * leftover hundredths to the top places, as `prizeAmounts` does with naira.
+ */
+export function hbarAmounts(pool: number, split: readonly number[]): number[] {
+  return prizeAmounts(Math.round(pool * 100), split).map((cents) => cents / 100);
+}
+
 /** 1st, 2nd, 3rd, 4th … 11th, 12th, 13th … 21st. */
 export function ordinal(n: number): string {
   const teen = n % 100 >= 11 && n % 100 <= 13;

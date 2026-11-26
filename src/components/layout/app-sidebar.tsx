@@ -18,7 +18,7 @@ import {
   SidebarRail,
   SidebarSeparator,
 } from "@/components/ui/sidebar";
-import { NAV, SETTINGS_NAV, isActive, type NavItem } from "./nav";
+import { HEDERA_NAV, NAV, SETTINGS_NAV, isActive, type NavItem } from "./nav";
 
 type Badges = Partial<Record<string, number>>;
 
@@ -40,8 +40,9 @@ function NavLink({ item, pathname, badge }: { item: NavItem; pathname: string; b
   );
 }
 
-export function AppSidebar({ badges = {} }: { badges?: Badges }) {
+export function AppSidebar({ badges = {}, hedera = false }: { badges?: Badges; /** The Hedera group, while its screens run (`lib/hedera/mode.ts`). */ hedera?: boolean }) {
   const pathname = usePathname();
+  const groups = hedera ? [...NAV, HEDERA_NAV] : NAV;
 
   return (
     <Sidebar collapsible="icon">
@@ -71,7 +72,7 @@ export function AppSidebar({ badges = {} }: { badges?: Badges }) {
       <SidebarSeparator className="mx-4 group-data-[collapsible=icon]:mx-2" />
 
       <SidebarContent className="gap-0 py-2">
-        {NAV.map((group) => (
+        {groups.map((group) => (
           <SidebarGroup key={group.label} className="px-3 group-data-[collapsible=icon]:px-3">
             <SidebarGroupLabel className="text-[0.7rem] tracking-wider text-muted-foreground/80 uppercase">
               {group.label}

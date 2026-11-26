@@ -41,6 +41,15 @@ export function formatCountCompact(n: number): string {
   return countCompact.format(n);
 }
 
+const hbarWhole = new Intl.NumberFormat(LOCALE, { maximumFractionDigits: 0 });
+const hbarCents = new Intl.NumberFormat(LOCALE, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+/** 1,500 HBAR · 17.31 HBAR · 12,558.20 HBAR. Two decimals at most: the admin never deals in tinybars. */
+export function formatHbar(amount: number): string {
+  const rounded = Math.round(amount * 100) / 100;
+  return `${(Number.isInteger(rounded) ? hbarWhole : hbarCents).format(rounded)} HBAR`;
+}
+
 /** +8.4% / -2.1% */
 export function formatChange(change: number): string {
   const sign = change > 0 ? "+" : "";

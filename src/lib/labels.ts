@@ -18,6 +18,20 @@ import type {
   TransactionStatus,
   TransactionType,
 } from "@/types";
+import type {
+  AssetFamily,
+  AssetRarity,
+  IdentityStatus,
+  IdentitySubmission,
+  JobAction,
+  JobKind,
+  JobProblem,
+  JobStatus,
+  PayoutStatus,
+  StoreItemState,
+  TournamentPrizeType,
+  TreasuryMovementKind,
+} from "@/types/hedera";
 
 /**
  * Human labels for every enum the admin prints, and the tone its badge takes.
@@ -216,4 +230,87 @@ export const ROUND: Record<RoundKey, string> = {
   quarterFinals: "Quarter-finals",
   semiFinals: "Semi-finals",
   finals: "Final",
+};
+
+/* ---- Hedera (behind HEDERA_MOCK; see lib/hedera/mode.ts) ---------------- */
+
+export const STORE_ITEM_STATE: Record<StoreItemState, Labelled> = {
+  draft: { label: "Draft", tone: "neutral", hint: "Never been on the store" },
+  scheduled: { label: "Scheduled", tone: "info", hint: "Published; the sale window hasn't opened yet" },
+  live: { label: "On the store", tone: "success" },
+  soldOut: { label: "Sold out", tone: "warning", hint: "The whole edition has gone to players" },
+  ended: { label: "Ended", tone: "neutral", hint: "The sale window has closed" },
+  unpublished: { label: "Unpublished", tone: "neutral", hint: "Taken off the store. Players who have it keep it." },
+};
+
+export const ASSET_FAMILY: Record<AssetFamily, string> = { skin: "Skin", weapon: "Weapon", character: "Character" };
+
+/** The collection each family mints into, as the admin reads it. */
+export const ASSET_COLLECTION: Record<AssetFamily, string> = { skin: "Skins", weapon: "Weapons", character: "Characters" };
+
+export const ASSET_RARITY: Record<AssetRarity, Labelled> = {
+  common: { label: "Common", tone: "neutral" },
+  rare: { label: "Rare", tone: "info" },
+  epic: { label: "Epic", tone: "brand" },
+  legendary: { label: "Legendary", tone: "warning" },
+};
+
+export const PRIZE_TYPE: Record<TournamentPrizeType, { label: string; body: string }> = {
+  cash: { label: "Cash", body: "Naira, as now." },
+  hbar: { label: "HBAR", body: "HBAR only, to each winner's linked wallet." },
+  both: { label: "Cash + HBAR", body: "Naira and HBAR for each paid place." },
+};
+
+export const PAYOUT_STATUS: Record<PayoutStatus, Labelled> = {
+  awaitingApproval: { label: "Awaiting approval", tone: "warning" },
+  held: { label: "On hold", tone: "neutral" },
+  sending: { label: "Sending", tone: "info", hint: "Approved; the Hedera service is sending it" },
+  sent: { label: "Sent", tone: "success" },
+  failed: { label: "Failed", tone: "danger", hint: "The network refused it. Retry from Hedera jobs." },
+};
+
+export const IDENTITY_STATUS: Record<IdentityStatus, Labelled> = {
+  notNeeded: { label: "Not needed", tone: "neutral", hint: "The prize is under the identity-check threshold" },
+  waiting: { label: "Waiting for player", tone: "neutral", hint: "The winner hasn't sent their identity check yet" },
+  toReview: { label: "To review", tone: "warning" },
+  verified: { label: "Verified", tone: "success" },
+  rejected: { label: "Rejected", tone: "danger", hint: "Waiting for the winner to send it again" },
+};
+
+export const ID_TYPE: Record<NonNullable<IdentitySubmission["details"]>["idType"], string> = {
+  nin: "NIN",
+  passport: "International passport",
+  drivers: "Driver's licence",
+  voters: "Voter's card (PVC)",
+};
+
+export const JOB_KIND: Record<JobKind, string> = { mint: "Mint", payment: "Payment", payout: "Payout" };
+
+export const JOB_PROBLEM: Record<JobProblem, Labelled> = {
+  mintFailed: { label: "Mint failed", tone: "danger" },
+  paymentUnconfirmed: { label: "Payment not confirmed", tone: "warning", hint: "The gateway hasn't confirmed a payment the Mirror Node shows" },
+  underpaid: { label: "Underpaid", tone: "warning" },
+  paidAfterExpiry: { label: "Paid after expiry", tone: "warning", hint: "The HBAR arrived after the quote expired" },
+  payoutFailed: { label: "Payout failed", tone: "danger" },
+};
+
+export const JOB_STATUS: Record<JobStatus, Labelled> = {
+  open: { label: "Needs action", tone: "danger" },
+  working: { label: "Working", tone: "info" },
+  resolved: { label: "Resolved", tone: "success" },
+};
+
+/** The button, and what the job says while it runs and once it's done. */
+export const JOB_ACTION: Record<JobAction, { label: string; working: string; done: string }> = {
+  retry: { label: "Retry", working: "Retrying", done: "Retried" },
+  recheck: { label: "Check again", working: "Checking the Mirror Node", done: "Confirmed on the Mirror Node" },
+  refund: { label: "Refund", working: "Refunding", done: "Refunded" },
+};
+
+export const MOVEMENT_KIND: Record<TreasuryMovementKind, string> = {
+  sale: "Store sale",
+  payout: "Prize payout",
+  refund: "Refund",
+  fees: "Network fees",
+  topUp: "Top-up",
 };

@@ -1,7 +1,11 @@
 import {
   ArrowLeftRight,
   BookOpen,
+  Gem,
+  HandCoins,
+  Landmark,
   LayoutDashboard,
+  ListRestart,
   MapPin,
   Settings,
   Shirt,
@@ -45,6 +49,20 @@ export const NAV: NavGroup[] = [
     items: [{ title: "Notes", href: "/notes", icon: StickyNote }],
   },
 ];
+
+/**
+ * The Hedera screens (Sophia's v2 scope, "Admin screens (internal)"). Shown
+ * only while they run, which for now means on mock data (`lib/hedera/mode.ts`).
+ */
+export const HEDERA_NAV: NavGroup = {
+  label: "Hedera",
+  items: [
+    { title: "Game store", href: "/hedera/store", icon: Gem },
+    { title: "Payouts", href: "/hedera/payouts", icon: HandCoins },
+    { title: "Hedera jobs", href: "/hedera/jobs", icon: ListRestart },
+    { title: "Treasury", href: "/hedera/treasury", icon: Landmark },
+  ],
+};
 
 export const SETTINGS_NAV: NavItem = { title: "Settings", href: "/settings", icon: Settings };
 

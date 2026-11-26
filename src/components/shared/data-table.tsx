@@ -63,6 +63,8 @@ export type Column<T> = {
   pdf?: (row: T) => string;
   className?: string;
   headClassName?: string;
+  /** In the export only, not on screen: a record a file needs that the table has no room for. */
+  exportOnly?: boolean;
 };
 
 export type Filter<T> = {
@@ -172,6 +174,7 @@ export function DataTable<T>({
   const current = Math.min(page, pageCount);
   const visible = filtered.slice((current - 1) * pageSize, current * pageSize);
   const activeCount = Object.values(active).filter(Boolean).length;
+  const shown = columns.filter((c) => !c.exportOnly);
 
   function setFilter(id: string, value: string) {
     setActive((a) => ({ ...a, [id]: value }));
@@ -320,13 +323,13 @@ export function DataTable<T>({
           <Table>
             <TableHeader>
               <TableRow className="border-none bg-paper hover:bg-paper">
-                {columns.map((col, i) => (
+                {shown.map((col, i) => (
                   <TableHead
                     key={col.id}
                     className={cn(
                       "h-12 px-3 font-medium text-muted-foreground",
                       i === 0 && "rounded-l-lg",
-                      i === columns.length - 1 && "rounded-r-lg",
+                      i === shown.length - 1 && "rounded-r-lg",
                       col.headClassName,
                     )}
                     aria-sort={sort?.id === col.id ? (sort.dir === "asc" ? "ascending" : "descending") : undefined}
@@ -368,7 +371,7 @@ export function DataTable<T>({
                       }
                     }}
                   >
-                    {columns.map((col) => (
+                    {shown.map((col) => (
                       <TableCell key={col.id} className={cn("h-16 px-3", col.className)}>
                         {col.cell(row)}
                       </TableCell>

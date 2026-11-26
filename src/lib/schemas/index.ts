@@ -3,6 +3,7 @@ import { SPLIT_TOLERANCE, splitTotal } from "@/lib/tournaments";
 import { CUSTOM_COLOUR_ID, MAX_CUSTOM_COLOURS, STANDARD_COLOURS, STANDARD_COLOUR_IDS, colourNameTaken } from "@/lib/colours";
 import { COVER_BAND } from "@/lib/labels";
 import type { CoverBand } from "@/types";
+import { ASSET_FAMILIES, ASSET_RARITIES, PRICE_CURRENCIES, TOURNAMENT_PRIZE_TYPES } from "@/types/hedera";
 
 /**
  * Form and action schemas. The same schema validates in the browser (through
@@ -334,12 +335,25 @@ export const tournamentSchema = z
     /** Rewards on offer or not; the items are set up in the game backend. */
     inGameRewards: z.boolean(),
     featured: z.boolean(),
+    /**
+     * How it pays (the Hedera doc: cash, HBAR or both, per tournament).
+     * Offered only while the Hedera screens are on; otherwise always cash.
+     */
+    prizeType: z.enum(TOURNAMENT_PRIZE_TYPES),
+    /** The HBAR pool, divided by the same prize split as the cash (the team, 2026-11-23). */
+    hbarPool: z.coerce
+      .number<number>()
+      .min(0, "The HBAR pool can't be negative")
+      .max(10_000_000, "Over 10,000,000 HBAR? Check the amount")
+      .refine((n) => Math.abs(n * 100 - Math.round(n * 100)) < 1e-6, "Two decimal places at most"),
   })
+  .refine((v) => v.prizeType === "cash" || v.hbarPool > 0, { path: ["hbarPool"], message: "Set the HBAR pool" })
   .refine((v) => v.unlimitedSlots || v.slots >= 2, { path: ["slots"], message: "A tournament needs at least 2 slots" })
   .refine((v) => v.unlimitedSlots || v.slots <= 100_000, { path: ["slots"], message: "Over 100,000 slots? Make it unlimited" })
   // An even cap pairs everyone off. (Unlimited fields end even too: over 32 go through
   // Qualifiers to exactly 32, and any empty seat in a smaller bracket is a bye.)
   .refine((v) => v.unlimitedSlots || v.slots % 2 === 0, { path: ["slots"], message: "Use an even number so every player has an opponent" })
+  // The split divides whichever pools the tournament pays, cash, HBAR or both, so it is always checked.
   .refine((v) => Math.abs(splitTotal(v.prizeSplit.map((p) => p.share)) - 100) <= SPLIT_TOLERANCE, {
     path: ["prizeSplit"],
     message: "The shares must add up to 100%",
@@ -361,3 +375,81 @@ export const tournamentSchema = z
     message: "Registration must close before the tournament starts",
   });
 export type TournamentInput = z.infer<typeof tournamentSchema>;
+
+/* ---- Hedera (behind HEDERA_MOCK) ---------------------------------------- */
+
+/** HBAR an admin types: above zero, two decimals at most. */
+const hbarAmount = (what: string) =>
+  z.coerce
+    .number<number>()
+    .gt(0, `${what} must be more than 0 HBAR`)
+    .max(100_000_000, `${what} is more HBAR than the treasury could hold`)
+    .refine((n) => Math.abs(n * 100 - Math.round(n * 100)) < 1e-6, "Two decimal places at most");
+
+/**
+ * A game store item, as the form edits it. The asset ID and collection are
+ * not here: they follow from the name and family on creation and never change.
+ * Dates are Lagos-time `datetime-local` values.
+ */
+export const storeItemSchema = z
+  .object({
+    name: z.string().trim().min(3, "Give it a name").max(60),
+    description: z.string().trim().min(10, "Describe it for players").max(300),
+    family: z.enum(ASSET_FAMILIES),
+    rarity: z.enum(ASSET_RARITIES),
+    image: z.string().min(1, "Add the picture players see"),
+    imageAlt: z.string().trim().min(3, "Describe the picture for screen readers").max(120),
+    access: z.enum(["sale", "free"]),
+    priceAmount: z.coerce.number<number>(),
+    priceCurrency: z.enum(PRICE_CURRENCIES),
+    limited: z.boolean(),
+    editionSize: z.coerce.number<number>().int("Whole items only"),
+    saleStartsAt: z.string().optional(),
+    saleEndsAt: z.string().optional(),
+    published: z.boolean(),
+  })
+  .refine((v) => v.access === "free" || v.priceAmount > 0, { path: ["priceAmount"], message: "Set a price, or make it free on wallet link" })
+  .refine((v) => v.access === "free" || v.priceAmount <= 10_000_000, { path: ["priceAmount"], message: "That price is too high to be right" })
+  .refine((v) => v.access === "free" || Math.abs(v.priceAmount * 100 - Math.round(v.priceAmount * 100)) < 1e-6, {
+    path: ["priceAmount"],
+    message: "Two decimal places at most",
+  })
+  .refine((v) => !v.limited || v.editionSize >= 1, { path: ["editionSize"], message: "A limited edition needs at least 1" })
+  .refine((v) => !v.limited || v.editionSize <= 1_000_000, { path: ["editionSize"], message: "Over 1,000,000? Make it unlimited" })
+  .refine((v) => !v.saleStartsAt || !v.saleEndsAt || v.saleEndsAt > v.saleStartsAt, { path: ["saleEndsAt"], message: "It must end after it starts" });
+export type StoreItemInput = z.infer<typeof storeItemSchema>;
+
+export const holdPayoutSchema = z.object({
+  reason: z.string().trim().min(5, "Say why, for whoever picks it up next").max(300),
+});
+
+export const rejectIdentitySchema = z.object({
+  note: z.string().trim().min(10, "Tell the winner what to fix").max(300),
+});
+
+/**
+ * Paid by hand from an admin's own wallet. A Hedera transaction ID is the
+ * payer's account, then the second and nanosecond: `0.0.4521@1732371000.123456789`,
+ * or HashScan's spelling with dashes, which is turned into the first.
+ */
+export const manualPayoutSchema = z.object({
+  txId: z
+    .string()
+    .trim()
+    .regex(/^0\.0\.\d+[@-]\d{9,10}[.-]\d{1,9}$/, "Paste the transaction ID, like 0.0.4521@1732371000.123456789")
+    .transform((v) => v.replace(/^(0\.0\.\d+)-(\d+)-(\d+)$/, "$1@$2.$3")),
+  from: z.string().trim().regex(/^0\.0\.\d+$/, "The account you sent it from, like 0.0.4521"),
+  note: z.string().trim().max(300).optional(),
+});
+export type ManualPayoutInput = z.input<typeof manualPayoutSchema>;
+
+export const treasurySettingsSchema = z.object({
+  alertBelow: hbarAmount("The alert line"),
+  identityThreshold: hbarAmount("The threshold"),
+  hbarDiscountPct: z.coerce
+    .number<number>()
+    .min(0, "The discount can't be negative")
+    .max(20, "Over 20% off? Check the rate")
+    .refine((n) => Math.abs(n * 100 - Math.round(n * 100)) < 1e-6, "Two decimal places at most"),
+});
+export type TreasurySettingsInput = z.infer<typeof treasurySettingsSchema>;

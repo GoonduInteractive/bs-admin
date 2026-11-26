@@ -15,14 +15,16 @@ import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
-import { formatNaira } from "@/lib/format";
+import { formatHbar, formatNaira } from "@/lib/format";
+import { PRIZE_TYPE } from "@/lib/labels";
 
 import { toLagosInput } from "@/lib/lagos-time";
 import { GLOBAL_REGION, regionName, regionNames } from "@/lib/regions";
 import { tournamentSchema, type TournamentInput } from "@/lib/schemas";
-import { DEFAULT_PRIZE_SPLIT, SPLIT_TOLERANCE, ordinal, prizeAmounts, splitTotal } from "@/lib/tournaments";
+import { DEFAULT_PRIZE_SPLIT, SPLIT_TOLERANCE, hbarAmounts, ordinal, prizeAmounts, splitTotal } from "@/lib/tournaments";
 import { cn } from "@/lib/utils";
 import type { Region, Tournament } from "@/types";
+import { TOURNAMENT_PRIZE_TYPES, type TournamentHederaPrize } from "@/types/hedera";
 import { saveTournamentAction } from "./actions";
 
 /** 100% over n positions, to two decimals; 1st place takes the leftover hundredths. */
@@ -42,7 +44,23 @@ const VISIBILITY = [
   { value: "registrationOpen", title: "Registration open", body: "Players can join until registration closes." },
 ] as const;
 
-function toInput(t?: Tournament): TournamentInput {
+/** What a new HBAR pool starts at: the website mock's three places, 5,000 + 2,500 + 1,000. */
+const DEFAULT_HBAR_POOL = 8_500;
+
+/**
+ * The Hedera part of the form, while those screens run (`lib/hedera/mode.ts`):
+ * the tournament's prize type and HBAR pool, and what to warn against. The
+ * pool is divided by the same prize split as the cash, tiered by place.
+ */
+export type TournamentHederaFields = {
+  prize: TournamentHederaPrize;
+  /** Places over this need the winner's identity check. */
+  identityThreshold: number;
+  /** The treasury's balance less what's already on its way. */
+  treasuryFree: number;
+};
+
+function toInput(t?: Tournament, hedera?: TournamentHederaFields | null): TournamentInput {
   const editable = t && ["draft", "comingSoon", "registrationOpen"].includes(t.status);
   return {
     name: t?.name ?? "",
@@ -59,30 +77,39 @@ function toInput(t?: Tournament): TournamentInput {
     slots: t?.slots.total ?? 32,
     inGameRewards: t?.inGameRewards ?? true,
     featured: t?.featured ?? false,
+    prizeType: hedera?.prize.type ?? "cash",
+    // Kept for switching back to HBAR; ignored while the tournament pays cash only.
+    hbarPool: hedera?.prize.hbarPool || DEFAULT_HBAR_POOL,
   };
 }
 
 export function TournamentForm({
   tournament,
   regions,
+  hedera = null,
 }: {
   tournament?: Tournament;
   /** The Regions list. Active ones are offered; an archived one only if this tournament already uses it. */
   regions: Region[];
+  /** Present while the Hedera screens run: the prize type and HBAR per place. */
+  hedera?: TournamentHederaFields | null;
 }) {
   const router = useRouter();
   const [saving, start] = useTransition();
   const form = useForm<TournamentInput>({
     resolver: zodResolver(tournamentSchema),
-    defaultValues: toInput(tournament),
+    defaultValues: toInput(tournament, hedera),
   });
   const { errors } = form.formState;
   const names = regionNames(regions);
   const regionOptions = regions.filter((r) => r.status === "active" || r.id === tournament?.region);
-  const [prizePool, prizeSplit, unlimitedSlots] = useWatch({
+  const [prizePool, prizeSplit, unlimitedSlots, prizeType, hbarPool] = useWatch({
     control: form.control,
-    name: ["prizePool", "prizeSplit", "unlimitedSlots"],
+    name: ["prizePool", "prizeSplit", "unlimitedSlots", "prizeType", "hbarPool"],
   });
+  const paysCash = prizeType !== "hbar";
+  const paysHbar = !!hedera && prizeType !== "cash";
+  const hbarTotal = Number(hbarPool) || 0;
   const { fields: prizeFields, append: appendPosition, remove: removePosition, replace: replaceSplit } = useFieldArray({
     control: form.control,
     name: "prizeSplit",
@@ -91,6 +118,7 @@ export function TournamentForm({
   const total = splitTotal(shares);
   const splitOff = Math.abs(total - 100) > SPLIT_TOLERANCE;
   const payouts = prizeAmounts(Number(prizePool) || 0, shares);
+  const hbarPayouts = hbarAmounts(hbarTotal, shares);
   // The whole split's error (total, too many positions) comes first, then the first bad share.
   const splitErrors = errors.prizeSplit;
   const splitError =
@@ -234,12 +262,70 @@ export function TournamentForm({
 
         <Panel title="Money & rewards">
           <FieldGroup>
-            <div className="grid gap-4 sm:grid-cols-2">
-              <Field data-invalid={!!errors.prizePool}>
-                <FieldLabel htmlFor="prizePool">Prize pool (₦)</FieldLabel>
-                <Input id="prizePool" type="number" min={0} step={10000} className="h-10" aria-invalid={!!errors.prizePool} {...form.register("prizePool")} />
-                <FieldError errors={[errors.prizePool]} />
+            {hedera && (
+              <Field>
+                <FieldTitle>Prize paid in</FieldTitle>
+                <Controller
+                  control={form.control}
+                  name="prizeType"
+                  render={({ field }) => (
+                    <RadioGroup
+                      value={field.value}
+                      onValueChange={(v) => {
+                        field.onChange(v);
+                        if (form.formState.isSubmitted) form.trigger(["prizeSplit", "hbarPool"]);
+                      }}
+                      className="grid gap-2 sm:grid-cols-3"
+                    >
+                      {TOURNAMENT_PRIZE_TYPES.map((type) => (
+                        <FieldLabel key={type} htmlFor={`prize-${type}`} className="rounded-lg border has-data-checked:border-primary has-data-checked:bg-paper">
+                          <Field orientation="horizontal" className="p-3">
+                            <RadioGroupItem value={type} id={`prize-${type}`} />
+                            <FieldContent>
+                              <FieldTitle>{PRIZE_TYPE[type].label}</FieldTitle>
+                              <FieldDescription>{PRIZE_TYPE[type].body}</FieldDescription>
+                            </FieldContent>
+                          </Field>
+                        </FieldLabel>
+                      ))}
+                    </RadioGroup>
+                  )}
+                />
+                <FieldDescription>The tournament page shows it, and asks HBAR players to link a wallet. Saved in this admin only, on mock data.</FieldDescription>
               </Field>
+            )}
+            <div className={cn("grid gap-4 sm:grid-cols-2", paysHbar && "lg:grid-cols-3")}>
+              {paysCash ? (
+                <Field data-invalid={!!errors.prizePool}>
+                  <FieldLabel htmlFor="prizePool">Prize pool (₦)</FieldLabel>
+                  <Input id="prizePool" type="number" min={0} step={10000} className="h-10" aria-invalid={!!errors.prizePool} {...form.register("prizePool")} />
+                  <FieldError errors={[errors.prizePool]} />
+                </Field>
+              ) : (
+                <Field>
+                  <FieldTitle>Cash prize</FieldTitle>
+                  <p className="flex h-10 items-center rounded-lg border border-dashed px-3 text-sm text-muted-foreground">None: the pool is saved as ₦0.</p>
+                </Field>
+              )}
+              {hedera && paysHbar && (
+                <Field data-invalid={!!errors.hbarPool}>
+                  <FieldLabel htmlFor="hbarPool">HBAR pool</FieldLabel>
+                  <Input
+                    id="hbarPool"
+                    type="number"
+                    inputMode="decimal"
+                    min={0}
+                    step="any"
+                    className="h-10 tabular"
+                    aria-invalid={!!errors.hbarPool}
+                    {...form.register("hbarPool")}
+                  />
+                  {hbarTotal > hedera.treasuryFree && (
+                    <FieldDescription className="text-flare">The treasury has {formatHbar(hedera.treasuryFree)} free.</FieldDescription>
+                  )}
+                  <FieldError errors={[errors.hbarPool]} />
+                </Field>
+              )}
               {/* No entry fee field: every tournament is free to enter (2026-10-02, legal). */}
               <Field>
                 <FieldTitle>Entry</FieldTitle>
@@ -261,14 +347,26 @@ export function TournamentForm({
                   </Button>
                 </div>
               </div>
-              <FieldDescription>Pay as many positions as you like. Set each one&apos;s share of the pool; the naira follow.</FieldDescription>
-              <div className="overflow-hidden rounded-lg border">
+              <FieldDescription>
+                Pay as many positions as you like. Set each one&apos;s share of the pool;{" "}
+                {paysCash && paysHbar ? "the naira and HBAR follow, from the same shares." : paysHbar ? "the HBAR follows." : "the naira follow."}
+                {hedera && paysHbar && (
+                  <>
+                    {" "}
+                    HBAR goes from the treasury to each winner&apos;s linked wallet once an admin approves it on Payouts. Places over{" "}
+                    {formatHbar(hedera.identityThreshold)} wait for the winner&apos;s identity check.
+                  </>
+                )}
+              </FieldDescription>
+              <div className="overflow-x-auto rounded-lg border">
                 <table className="w-full text-sm">
                   <thead className="bg-paper text-muted-foreground">
                     <tr>
                       <th className="px-3 py-2.5 text-left font-medium">Position</th>
                       <th className="px-2 py-2.5 text-left font-medium">Share</th>
-                      <th className="px-3 py-2.5 text-right font-medium">Payout</th>
+                      {paysCash && <th className="px-3 py-2.5 text-right font-medium">{paysHbar ? "Naira" : "Payout"}</th>}
+                      {hedera && paysHbar && <th className="px-3 py-2.5 text-right font-medium">HBAR</th>}
+                      {hedera && paysHbar && <th className="px-3 py-2.5 text-right font-medium">Identity check</th>}
                       <th className="w-10" />
                     </tr>
                   </thead>
@@ -292,7 +390,11 @@ export function TournamentForm({
                             <span className="pointer-events-none absolute inset-y-0 right-2.5 flex items-center text-muted-foreground">%</span>
                           </div>
                         </td>
-                        <td className="px-3 py-2 text-right font-medium tabular">{formatNaira(payouts[i] ?? 0)}</td>
+                        {paysCash && <td className="px-3 py-2 text-right font-medium tabular">{formatNaira(payouts[i] ?? 0)}</td>}
+                        {hedera && paysHbar && <td className="px-3 py-2 text-right font-medium tabular">{formatHbar(hbarPayouts[i] ?? 0)}</td>}
+                        {hedera && paysHbar && (
+                          <td className="px-3 py-2 text-right text-muted-foreground">{(hbarPayouts[i] ?? 0) > hedera.identityThreshold ? "Needed" : "Not needed"}</td>
+                        )}
                         <td className="px-1 py-2">
                           <Button
                             type="button"

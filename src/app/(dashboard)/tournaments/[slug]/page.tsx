@@ -8,13 +8,15 @@ import { StatCard } from "@/components/shared/stat-card";
 import { StatusBadge } from "@/components/shared/status-badge";
 import { NotFoundError } from "@/lib/api/client";
 import { getRegions, getTournament } from "@/lib/api/competition";
-import { formatDateTime, formatNaira } from "@/lib/format";
-import { STAGE, TOURNAMENT_STATUS } from "@/lib/labels";
+import { getTournamentHederaFields } from "@/lib/api/hedera";
+import { formatDateTime, formatHbar, formatNaira } from "@/lib/format";
+import { HEDERA_ON } from "@/lib/hedera/mode";
+import { PRIZE_TYPE, STAGE, TOURNAMENT_STATUS } from "@/lib/labels";
 import { regionName, regionNames } from "@/lib/regions";
 import { ordinal, prizeAmounts, slotsFill, splitSummary, stagePosition } from "@/lib/tournaments";
 import { cn } from "@/lib/utils";
 import type { Tournament } from "@/types";
-import { TournamentForm } from "../tournament-form";
+import { TournamentForm, type TournamentHederaFields } from "../tournament-form";
 import { Bracket } from "./bracket";
 import { QualifierBoard } from "./qualifier-board";
 import { Lifecycle } from "./lifecycle";
@@ -87,7 +89,11 @@ function Fact({ label, children }: { label: string; children: React.ReactNode })
   );
 }
 
-function Overview({ t, region }: { t: Tournament; region: string }) {
+function Overview({ t, region, hedera }: { t: Tournament; region: string; hedera: TournamentHederaFields | null }) {
+  // While the Hedera screens run: how it pays, and HBAR per place. Off, every tournament pays cash.
+  const prize = hedera?.prize ?? { type: "cash" as const, hbar: [] };
+  const paysCash = prize.type !== "hbar";
+  const hbarTotal = prize.hbar.reduce((s, a) => s + a, 0);
   const played = t.bracket.flatMap((r) => r.matches).filter((m) => m.playedAt).length;
   const total = t.bracket.flatMap((r) => r.matches).length;
   const remaining = t.participants.filter((p) => p.status === "active" || p.status === "registered").length;
@@ -102,11 +108,15 @@ function Overview({ t, region }: { t: Tournament; region: string }) {
         />
         <StatCard label="Still in" value={remaining} footer={t.status === "active" ? "Not yet eliminated" : "Players registered"} />
         <StatCard label="Matches played" value={total ? `${played} / ${total}` : "—"} footer={total ? `${total - played} to go` : "Bracket not drawn"} />
-        <StatCard
-          label="Prize pool"
-          value={formatNaira(t.prizePool)}
-          footer={`${t.prizeSplit.length} paid position${t.prizeSplit.length === 1 ? "" : "s"} · free to enter`}
-        />
+        {paysCash ? (
+          <StatCard
+            label="Prize pool"
+            value={formatNaira(t.prizePool)}
+            footer={`${t.prizeSplit.length} paid position${t.prizeSplit.length === 1 ? "" : "s"}${prize.type === "both" ? ` · plus ${formatHbar(hbarTotal)}` : ""} · free to enter`}
+          />
+        ) : (
+          <StatCard label="HBAR prizes" value={formatHbar(hbarTotal)} footer={`${prize.hbar.length} paid place${prize.hbar.length === 1 ? "" : "s"} · free to enter`} />
+        )}
       </div>
 
       <Panel title="Journey to ascension" description="Qualifiers run only when over 32 players register; rounds bigger than the field are skipped.">
@@ -118,25 +128,55 @@ function Overview({ t, region }: { t: Tournament; region: string }) {
           <Panel title="About">
             <p className="text-sm leading-relaxed text-muted-foreground">{t.description}</p>
           </Panel>
-          <Panel title="Prize payouts" description={`${formatNaira(t.prizePool)} · ${splitSummary(t.prizeSplit)}. Change the split in Settings.`}>
-            <ol className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
-              {prizeAmounts(t.prizePool, t.prizeSplit).map((amount, i) => (
-                <li key={i} className="flex items-baseline justify-between gap-3 rounded-lg bg-paper px-3 py-2.5">
-                  <span className="text-sm">
-                    <span className="font-medium">{ordinal(i + 1)}</span>{" "}
-                    <span className="text-muted-foreground tabular">{t.prizeSplit[i]}%</span>
-                  </span>
-                  <span className="text-sm font-semibold tabular">{formatNaira(amount)}</span>
-                </li>
-              ))}
-            </ol>
-          </Panel>
+          {paysCash && (
+            <Panel title="Prize payouts" description={`${formatNaira(t.prizePool)} · ${splitSummary(t.prizeSplit)}. Change the split in Settings.`}>
+              <ol className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
+                {prizeAmounts(t.prizePool, t.prizeSplit).map((amount, i) => (
+                  <li key={i} className="flex items-baseline justify-between gap-3 rounded-lg bg-paper px-3 py-2.5">
+                    <span className="text-sm">
+                      <span className="font-medium">{ordinal(i + 1)}</span>{" "}
+                      <span className="text-muted-foreground tabular">{t.prizeSplit[i]}%</span>
+                    </span>
+                    <span className="text-sm font-semibold tabular">{formatNaira(amount)}</span>
+                  </li>
+                ))}
+              </ol>
+            </Panel>
+          )}
+          {hedera && prize.type !== "cash" && (
+            <Panel
+              title="HBAR prizes"
+              description={
+                <>
+                  {formatHbar(hbarTotal)} from the treasury, each place approved on{" "}
+                  <Link href="/hedera/payouts" className="font-medium text-signal hover:underline">
+                    Payouts
+                  </Link>
+                  . Change the amounts in Settings.
+                </>
+              }
+            >
+              <ol className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
+                {prize.hbar.map((amount, i) => (
+                  <li key={i} className="flex items-baseline justify-between gap-3 rounded-lg bg-paper px-3 py-2.5">
+                    <span className="text-sm">
+                      <span className="block font-medium">{ordinal(i + 1)}</span>
+                      {amount > hedera.identityThreshold && <span className="block text-xs text-muted-foreground">Identity check</span>}
+                    </span>
+                    <span className="text-sm font-semibold whitespace-nowrap tabular">{formatHbar(amount)}</span>
+                  </li>
+                ))}
+              </ol>
+            </Panel>
+          )}
         </div>
         <Panel title="Facts">
           <dl className="grid grid-cols-2 gap-4">
             <Fact label="Region">{region}</Fact>
             <Fact label="Format">1v1, single elimination</Fact>
-            <Fact label="Prize pool">{formatNaira(t.prizePool)}</Fact>
+            {hedera && <Fact label="Prize paid in">{PRIZE_TYPE[prize.type].label}</Fact>}
+            {paysCash && <Fact label="Prize pool">{formatNaira(t.prizePool)}</Fact>}
+            {prize.type !== "cash" && <Fact label="HBAR prizes">{formatHbar(hbarTotal)}</Fact>}
             <Fact label="In-game rewards">{t.inGameRewards ? "Available" : "None"}</Fact>
             <Fact label="Starts">{t.startsAt ? formatDateTime(t.startsAt) : "TBC"}</Fact>
             <Fact label="Ends">{t.endsAt ? formatDateTime(t.endsAt) : "TBC"}</Fact>
@@ -156,9 +196,14 @@ export default async function TournamentPage({ params, searchParams }: PageProps
     if (e instanceof NotFoundError) notFound();
     throw e;
   });
-  const regions = await getRegions();
+  const [regions, hedera] = await Promise.all([getRegions(), HEDERA_ON ? getTournamentHederaFields(t.id) : null]);
   const names = regionNames(regions);
   const region = regionName(t.region, names);
+  const hbarTotal = hedera ? hedera.prize.hbar.reduce((s, a) => s + a, 0) : 0;
+  const prizeLine =
+    hedera?.prize.type === "hbar"
+      ? `${formatHbar(hbarTotal)} in HBAR prizes`
+      : `${formatNaira(t.prizePool)} prize pool${hedera?.prize.type === "both" ? ` + ${formatHbar(hbarTotal)}` : ""}`;
 
   return (
     <>
@@ -170,7 +215,7 @@ export default async function TournamentPage({ params, searchParams }: PageProps
             <StatusBadge {...TOURNAMENT_STATUS[t.status]} className="font-sans text-xs tracking-normal normal-case" />
           </span>
         }
-        description={`${region} · ${formatNaira(t.prizePool)} prize pool${t.featured ? " · Featured on the Competition page" : ""}`}
+        description={`${region} · ${prizeLine}${t.featured ? " · Featured on the Competition page" : ""}`}
         actions={<Lifecycle tournament={t} />}
       />
 
@@ -192,10 +237,10 @@ export default async function TournamentPage({ params, searchParams }: PageProps
         ))}
       </nav>
 
-      {tab === "overview" && <Overview t={t} region={region} />}
+      {tab === "overview" && <Overview t={t} region={region} hedera={hedera} />}
       {tab === "bracket" && (stagePosition(t.stages).current?.key === "qualifiers" ? <QualifierBoard tournament={t} /> : <Bracket rounds={t.bracket} slug={t.slug} projected={t.projected} />)}
       {tab === "players" && <Participants slug={t.slug} name={t.name} participants={t.participants} names={names} />}
-      {tab === "settings" && <TournamentForm tournament={t} regions={regions} />}
+      {tab === "settings" && <TournamentForm tournament={t} regions={regions} hedera={hedera} />}
     </>
   );
 }
